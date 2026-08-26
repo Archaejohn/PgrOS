@@ -7,6 +7,7 @@
 #include "core/Policy.h"
 
 #include "buzz/buzz.h"
+#include "buzz/BuzzerFeedbackThread.h"
 
 #if defined(T_LORA_PAGER)
 #include "ExtensionIOXL9555.hpp"
@@ -53,8 +54,33 @@ static void setAmplifier(bool on)
 #endif
 }
 
+// Meshtastic builds a BuzzerFeedbackThread in setupModules() whenever the
+// display mode is not COLOR, which is our case. It observes InputBroker directly
+// and calls playChirp() on every Up/Down and playBeep() on Select, gated only on
+// config.device.buzzer_mode -- a setting the phone app writes for *notification*
+// preferences, which has nothing to do with whether the UI should click.
+//
+// The audible result is a chirp per rotary detent, which is exactly the "no
+// noises while using it" promise PgrOS makes. Deleting the object detaches its
+// observer (Observer's destructor unobserves) and costs nothing else: PgrOS
+// drives its own key feedback through keyFeedback() below.
+//
+// This is deliberately NOT done by writing config.device.buzzer_mode. That
+// setting is the user's, it is visible in the phone app, and it also governs
+// external message notifications they may well want.
+static void suppressUpstreamInputBuzzer()
+{
+    if (!buzzerFeedbackThread)
+        return;
+    delete buzzerFeedbackThread;
+    buzzerFeedbackThread = nullptr;
+    LOG_INFO("PgrOS: detached Meshtastic input buzzer; PgrOS owns key feedback");
+}
+
 void applyPolicy()
 {
+    suppressUpstreamInputBuzzer();
+
     const Policy &p = policy.get();
 
 #if defined(HAS_DRV2605)

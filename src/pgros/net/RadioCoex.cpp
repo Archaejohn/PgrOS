@@ -28,6 +28,7 @@
 #include "net/WifiManager.h"
 
 #include "core/EventBus.h"
+#include "core/Policy.h"
 
 namespace pgros
 {
@@ -201,6 +202,7 @@ CoexResult RadioCoex::request(CoexMode target, CoexReason reason)
     announce(mMode);
 
     if (target == CoexMode::Off) {
+        rememberMode(target); // do not resurrect a mode the user switched off
         mBusy = false;
         return CoexResult::Ok;
     }
@@ -235,6 +237,7 @@ CoexResult RadioCoex::request(CoexMode target, CoexReason reason)
 
     mMode = target;
     announce(mMode);
+    rememberMode(target);
 
     // The portal is a service of whichever WiFi mode is up; it never starts
     // itself.
@@ -243,6 +246,23 @@ CoexResult RadioCoex::request(CoexMode target, CoexReason reason)
 
     mBusy = false;
     return CoexResult::Ok;
+}
+
+// Persist what the user actually asked for.
+//
+// Meshtastic's config cannot express this: `config.network.wifi_enabled` is one
+// bool covering both station and access-point mode, and its own initWifi() only
+// ever brings up station mode. So a device told to run a hotspot, which has to
+// restart to release the Bluetooth controller, would come back with WiFi
+// "enabled", no SSID to join, nothing running, and no portal -- which is exactly
+// what happened. PgrOS keeps the real intent in its own policy and restores it
+// on the first service tick after boot.
+void RadioCoex::rememberMode(CoexMode target)
+{
+    if (policy.get().bootRadioMode == (uint8_t)target)
+        return;
+    policy.get().bootRadioMode = (uint8_t)target;
+    policy.save();
 }
 
 CoexResult RadioCoex::stageRebootInto(CoexMode target, CoexReason reason)
@@ -262,6 +282,8 @@ CoexResult RadioCoex::stageRebootInto(CoexMode target, CoexReason reason)
     case CoexMode::Off:
         break;
     }
+
+    rememberMode(target);
 
     config.network.wifi_enabled = wantWifi;
     config.bluetooth.enabled = wantBle;

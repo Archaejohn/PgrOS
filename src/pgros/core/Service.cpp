@@ -68,6 +68,7 @@ class ServiceThread : public concurrency::OSThread
         if (!mAnnouncedBoot) {
             mAnnouncedBoot = true;
             bootComplete();
+            restoreRadioMode();
         }
 
         service_.drain();
@@ -75,6 +76,30 @@ class ServiceThread : public concurrency::OSThread
     }
 
   private:
+    // Bring the radio back to whatever the user last chose.
+    //
+    // Meshtastic's own config cannot express "run an access point" -- it has a
+    // single wifi_enabled bool and initWifi() only ever does station mode. So a
+    // hotspot, which has to restart to release the Bluetooth controller, would
+    // otherwise come back as nothing at all and the portal would never start.
+    // PgrOS records the real intent in policy and reapplies it here, on the main
+    // task, once boot is genuinely finished.
+    void restoreRadioMode()
+    {
+        const auto want = (CoexMode)policy.get().bootRadioMode;
+        if (want == CoexMode::Off || want == coex.mode())
+            return;
+
+        // Only ever restore a WiFi mode. Bluetooth is already brought up by
+        // Meshtastic's PowerFSM when the config says so; doing it here too would
+        // fight it.
+        if (want != CoexMode::WifiStation && want != CoexMode::WifiAp)
+            return;
+
+        LOG_INFO("PgrOS: restoring radio mode %u after boot", (unsigned)want);
+        coex.request(want, CoexReason::BootDefault);
+    }
+
     bool mAnnouncedBoot = false;
 };
 

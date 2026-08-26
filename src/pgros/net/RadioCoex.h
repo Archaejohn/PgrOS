@@ -121,6 +121,9 @@ class RadioCoex
     // never both be true, persists, and schedules the restart.
     CoexResult stageRebootInto(CoexMode target, CoexReason reason);
 
+    // Persists the requested mode into PgrOS policy; see the definition.
+    void rememberMode(CoexMode target);
+
     bool startWifiStation();
     bool startWifiAp();
     void stopWifi();
