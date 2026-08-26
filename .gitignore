@@ -1,0 +1,23 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+vendor/firmware/.pio/
+
+# Build output
+build/
+*.bin
+*.elf
+*.map
+
+# Editors
+.vscode/
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Patch application marker
+vendor/.patches-applied

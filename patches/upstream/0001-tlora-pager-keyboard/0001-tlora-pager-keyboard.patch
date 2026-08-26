@@ -1,0 +1,275 @@
+diff --git a/src/input/TLoraPagerKeyboard.cpp b/src/input/TLoraPagerKeyboard.cpp
+index 3b7e45d18..1646406ab 100644
+--- a/src/input/TLoraPagerKeyboard.cpp
++++ b/src/input/TLoraPagerKeyboard.cpp
+@@ -28,45 +28,46 @@ constexpr uint8_t modifierRightShift = 0b0001;
+ constexpr uint8_t modifierSymKey = 21 - 1;
+ constexpr uint8_t modifierSym = 0b0010;
+ 
+-// Num chars per key, Modulus for rotating through characters
+-static uint8_t TLoraPagerTapMod[_TCA8418_NUM_KEYS] = {3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3,
+-                                                      3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3};
++// Column of TLoraPagerTapMap to use for each modifier state.
++constexpr uint8_t tapColumnBase = 0;
++constexpr uint8_t tapColumnShift = 1;
++constexpr uint8_t tapColumnSym = 2;
+ 
+ static unsigned char TLoraPagerTapMap[_TCA8418_NUM_KEYS][3] = {{'q', 'Q', '1'},
+-                                                               {'w', 'W', '2'},
+-                                                               {'e', 'E', '3'},
+-                                                               {'r', 'R', '4'},
+-                                                               {'t', 'T', '5'},
+-                                                               {'y', 'Y', '6'},
+-                                                               {'u', 'U', '7'},
+-                                                               {'i', 'I', '8'},
+-                                                               {'o', 'O', '9'},
+-                                                               {'p', 'P', '0'},
+-                                                               {'a', 'A', '*'},
+-                                                               {'s', 'S', '/'},
+-                                                               {'d', 'D', '+'},
+-                                                               {'f', 'F', '-'},
+-                                                               {'g', 'G', '='},
+-                                                               {'h', 'H', ':'},
+-                                                               {'j', 'J', '\''},
+-                                                               {'k', 'K', '"'},
+-                                                               {'l', 'L', '@'},
+-                                                               {Key::SELECT, 0x00, Key::TAB},
+-                                                               {0x00, 0x00, 0x00},
+-                                                               {'z', 'Z', '_'},
+-                                                               {'x', 'X', '$'},
+-                                                               {'c', 'C', ';'},
+-                                                               {'v', 'V', '?'},
+-                                                               {'b', 'B', '!'},
+-                                                               {'n', 'N', ','},
+-                                                               {'m', 'M', '.'},
+-                                                               {0x00, 0x00, 0x00},
+-                                                               {Key::BSP, 0x00, Key::ESC},
+-                                                               {' ', 0x00, Key::BL_TOGGLE}};
++                                                              {'w', 'W', '2'},
++                                                              {'e', 'E', '3'},
++                                                              {'r', 'R', '4'},
++                                                              {'t', 'T', '5'},
++                                                              {'y', 'Y', '6'},
++                                                              {'u', 'U', '7'},
++                                                              {'i', 'I', '8'},
++                                                              {'o', 'O', '9'},
++                                                              {'p', 'P', '0'},
++                                                              {'a', 'A', '*'},
++                                                              {'s', 'S', '/'},
++                                                              {'d', 'D', '+'},
++                                                              {'f', 'F', '-'},
++                                                              {'g', 'G', '='},
++                                                              {'h', 'H', ':'},
++                                                              {'j', 'J', '\''},
++                                                              {'k', 'K', '"'},
++                                                              {'l', 'L', '@'},
++                                                              {Key::SELECT, 0x00, Key::TAB},
++                                                              {0x00, 0x00, 0x00},
++                                                              {'z', 'Z', '_'},
++                                                              {'x', 'X', '$'},
++                                                              {'c', 'C', ';'},
++                                                              {'v', 'V', '?'},
++                                                              {'b', 'B', '!'},
++                                                              {'n', 'N', ','},
++                                                              {'m', 'M', '.'},
++                                                              {0x00, 0x00, 0x00},
++                                                              {Key::BSP, 0x00, Key::ESC},
++                                                              {' ', 0x00, Key::BL_TOGGLE}};
+ 
+ TLoraPagerKeyboard::TLoraPagerKeyboard()
+-    : TCA8418KeyboardBase(_TCA8418_ROWS, _TCA8418_COLS), modifierFlag(0), last_modifier_time(0), last_key(UINT8_MAX),
+-      next_key(UINT8_MAX), last_tap(0L), char_idx(0), tap_interval(0)
++    : TCA8418KeyboardBase(_TCA8418_ROWS, _TCA8418_COLS), modifierFlag(0), last_modifier_time(0), last_key(KEY_INDEX_INVALID),
++      next_key(KEY_INDEX_INVALID), release_key(KEY_INDEX_INVALID), last_tap(0L)
+ {
+ #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
+     ledcAttach(KB_BL_PIN, LEDC_BACKLIGHT_FREQ, LEDC_BACKLIGHT_BIT_WIDTH);
+@@ -85,19 +86,72 @@ void TLoraPagerKeyboard::reset(void)
+     setBacklight(false);
+ }
+ 
+-// handle multi-key presses (shift and alt)
++// Translate a raw TCA8418 key code into an index into TLoraPagerTapMap,
++// or KEY_INDEX_INVALID if it does not correspond to a mapped key.
++uint8_t TLoraPagerKeyboard::keyIndex(uint8_t key) const
++{
++    if (key == 0)
++        return KEY_INDEX_INVALID;
++
++    uint8_t row = (key - 1) / 10;
++    uint8_t col = (key - 1) % 10;
++
++    if (row >= _TCA8418_ROWS || col >= _TCA8418_COLS)
++        return KEY_INDEX_INVALID;
++
++    uint8_t idx = row * _TCA8418_COLS + col;
++    if (idx >= _TCA8418_NUM_KEYS)
++        return KEY_INDEX_INVALID;
++
++    return idx;
++}
++
++// Which column of the tap map the current modifier state selects.
++// modifierFlag is a bitmask, so it cannot be used as an index directly:
++// shift|sym == 0b11 would wrap back to the unmodified column.
++uint8_t TLoraPagerKeyboard::modifierIndex() const
++{
++    if (modifierFlag & modifierSym)
++        return tapColumnSym;
++    if (modifierFlag & modifierRightShift)
++        return tapColumnShift;
++    return tapColumnBase;
++}
++
++// Drain the controller's key event FIFO.
++//
++// TCA8418_REG_KEY_EVENT_A (0x04) is the *head* of a 10-byte event FIFO: reading
++// that one register pops an event and shifts the remaining events down. The
++// KEY_EVENT_B..J registers (0x05..0x0D) are the tail of that same FIFO, not
++// separately addressable events. Reading 0x04 + i therefore skips roughly every
++// other event and then runs off the end of the queued events into stale slots,
++// which are decoded as spurious keystrokes. Re-read 0x04 instead.
+ void TLoraPagerKeyboard::trigger()
+ {
+     uint8_t count = keyCount();
+     if (count == 0)
+         return;
++
++    if (state == Init) {
++        reset();
++        return;
++    }
++
+     for (uint8_t i = 0; i < count; ++i) {
+-        uint8_t k = readRegister(TCA8418_REG_KEY_EVENT_A + i);
++        uint8_t k = readRegister(TCA8418_REG_KEY_EVENT_A);
++        if (k == 0)
++            break; // FIFO drained early
++
+         uint8_t key = k & 0x7F;
+         if (k & 0x80) {
+-            pressed(key);
++            // Only accept a press when idle, matching TCA8418KeyboardBase::trigger().
++            if (state == Idle)
++                pressed(key);
+         } else {
+-            released();
++            if (state == Held) {
++                release_key = keyIndex(key);
++                released();
++            }
+             state = Idle;
+         }
+     }
+@@ -129,36 +183,21 @@ void TLoraPagerKeyboard::pressed(uint8_t key)
+         modifierFlag = 0;
+     }
+ 
+-    int row = (key - 1) / 10;
+-    int col = (key - 1) % 10;
+-
+-    if (row >= _TCA8418_ROWS || col >= _TCA8418_COLS) {
++    uint8_t idx = keyIndex(key);
++    if (idx == KEY_INDEX_INVALID) {
+         return; // Invalid key
+     }
+ 
+-    next_key = row * _TCA8418_COLS + col;
++    next_key = idx;
+     state = Held;
+ 
+     uint32_t now = millis();
+-    tap_interval = now - last_tap;
+ 
+     updateModifierFlag(next_key);
+     if (isModifierKey(next_key)) {
+         last_modifier_time = now;
+     }
+ 
+-    if (tap_interval < 0) {
+-        last_tap = 0;
+-        state = Busy;
+-        return;
+-    }
+-
+-    if (next_key != last_key || tap_interval > _TCA8418_MULTI_TAP_THRESHOLD) {
+-        char_idx = 0;
+-    } else {
+-        char_idx += 1;
+-    }
+-
+     last_key = next_key;
+     last_tap = now;
+ }
+@@ -169,22 +208,32 @@ void TLoraPagerKeyboard::released()
+         return;
+     }
+ 
+-    if (last_key >= _TCA8418_NUM_KEYS) {
+-        last_key = UINT8_MAX;
++    // Releases must be matched to the key that is actually held. Typing with any
++    // rollover routinely delivers a release for key A while key B is already down;
++    // emitting last_key unconditionally here duplicated the newer character.
++    if (last_key >= _TCA8418_NUM_KEYS || release_key != last_key) {
++        last_key = KEY_INDEX_INVALID;
++        release_key = KEY_INDEX_INVALID;
+         state = Idle;
+         return;
+     }
+ 
+-    uint32_t now = millis();
+-    last_tap = now;
++    last_tap = millis();
+ 
+-    if (TLoraPagerTapMap[last_key][modifierFlag % TLoraPagerTapMod[last_key]] == Key::BL_TOGGLE) {
++    unsigned char out = TLoraPagerTapMap[last_key][modifierIndex()];
++    bool wasModifier = isModifierKey(last_key);
++
++    last_key = KEY_INDEX_INVALID;
++    release_key = KEY_INDEX_INVALID;
++
++    if (out == Key::BL_TOGGLE) {
+         toggleBacklight();
++        modifierFlag = 0; // do not leak a latched modifier into the next keystroke
+         return;
+     }
+ 
+-    queueEvent(TLoraPagerTapMap[last_key][modifierFlag % TLoraPagerTapMod[last_key]]);
+-    if (isModifierKey(last_key) == false)
++    queueEvent(out);
++    if (!wasModifier)
+         modifierFlag = 0;
+ }
+ 
+@@ -228,4 +277,4 @@ bool TLoraPagerKeyboard::isModifierKey(uint8_t key)
+     return (key == modifierRightShiftKey || key == modifierSymKey);
+ }
+ 
+-#endif
+\ No newline at end of file
++#endif
+diff --git a/src/input/TLoraPagerKeyboard.h b/src/input/TLoraPagerKeyboard.h
+index 06a4c7b63..2a6ea6c8b 100644
+--- a/src/input/TLoraPagerKeyboard.h
++++ b/src/input/TLoraPagerKeyboard.h
+@@ -18,13 +18,17 @@ class TLoraPagerKeyboard : public TCA8418KeyboardBase
+     bool isModifierKey(uint8_t key);
+     void toggleBacklight(bool off = false);
+ 
++    static constexpr uint8_t KEY_INDEX_INVALID = UINT8_MAX;
++
++    uint8_t keyIndex(uint8_t key) const;
++    uint8_t modifierIndex() const;
++
+   private:
+     uint8_t modifierFlag;        // Flag to indicate if a modifier key is pressed
+     uint32_t last_modifier_time; // Timestamp of the last modifier key press
+-    uint8_t last_key;
++    uint8_t last_key;            // Key index currently held, or KEY_INDEX_INVALID
+     uint8_t next_key;
++    uint8_t release_key; // Key index of the release event being processed
+     uint32_t last_tap;
+-    uint8_t char_idx;
+-    int32_t tap_interval;
+     uint32_t brightness = 0;
+ };
