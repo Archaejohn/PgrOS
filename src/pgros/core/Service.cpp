@@ -72,6 +72,23 @@ class ServiceThread : public concurrency::OSThread
         }
 
         service_.drain();
+
+        // Pump the web server.
+        //
+        // esp32_https_server is synchronous: it accepts connections and services
+        // open ones only when loop() is called, and nothing else in PgrOS drives
+        // it. Without this the listening socket is up -- a phone associates and
+        // gets an address quite happily -- but no HTTP request is ever read, so
+        // the browser just hangs. Meshtastic's own WebServerThread pumps its
+        // server the same way, from this same main task.
+        if (portal.running()) {
+            portal.loop();
+            // 20 ms per accept-and-serve step makes page loads feel sluggish;
+            // an idle loop() is cheap, so tick faster while anyone might be
+            // connected.
+            return 5;
+        }
+
         return 20;
     }
 
