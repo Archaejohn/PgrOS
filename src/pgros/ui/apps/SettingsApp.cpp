@@ -146,6 +146,20 @@ void SettingsApp::onCreate(lv_obj_t *parent)
     lv_obj_remove_flag(mRoot, LV_OBJ_FLAG_SCROLLABLE);
 
     buildList(mRoot);
+
+    // A persistent hint bar. On a device whose only controls are a rotary and a
+    // press, the difference between "turning moves" and "turning changes" is not
+    // discoverable, so the screen says which one is live.
+    mHint = lv_label_create(mRoot);
+    lv_obj_set_style_text_font(mHint, theme.fontSmall(), 0);
+    lv_obj_set_style_text_color(mHint, lv_color_hex(theme.colors().textFaint), 0);
+    lv_obj_set_style_bg_color(mHint, lv_color_hex(theme.colors().bg), 0);
+    lv_obj_set_style_bg_opa(mHint, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_hor(mHint, metrics::padS, 0);
+    lv_label_set_text(mHint, "turn to move        press to change");
+    lv_obj_align(mHint, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_move_foreground(mHint);
+
     buildConfirm(mRoot);
 }
 
@@ -373,9 +387,26 @@ void SettingsApp::applySelection(bool scroll)
         const bool sel = (i == mSelected);
         lv_obj_set_style_bg_color(mRows[i].obj,
                                   lv_color_hex(sel ? theme.colors().surfaceAlt : theme.colors().surface), 0);
-        lv_obj_set_style_border_width(mRows[i].obj, sel ? 1 : 0, 0);
+        // A thicker accent border marks the row being edited, so it is obvious
+        // that the rotary is now changing a value rather than moving down the
+        // list.
+        lv_obj_set_style_border_width(mRows[i].obj, sel ? (mEditing ? 2 : 1) : 0, 0);
         lv_obj_set_style_border_color(mRows[i].obj, lv_color_hex(theme.colors().accent), 0);
+
+        if (mRows[i].value) {
+            const bool hot = sel && mEditing;
+            lv_obj_set_style_text_color(mRows[i].value,
+                                        lv_color_hex(hot ? theme.colors().accent : theme.colors().textDim), 0);
+        }
     }
+
+    if (mHint) {
+        if (mEditing)
+            lv_label_set_text(mHint, "turn to change      press to finish");
+        else
+            lv_label_set_text(mHint, "turn to move        press to change");
+    }
+
     if (scroll && mSelected < mRowCount && mRows[mSelected].obj)
         lv_obj_scroll_to_view(mRows[mSelected].obj, LV_ANIM_ON);
 }
@@ -523,9 +554,24 @@ bool SettingsApp::activate(uint8_t i)
         showConfirm(true);
         return true;
     }
-    // Enter behaves as "step forward" for everything else, which keeps the
-    // interaction modeless.
-    return adjust(i, +1);
+
+    switch (kTable[i].kind) {
+    case Kind::Toggle:
+        // Two states: pressing is unambiguous, so act at once rather than
+        // making the user enter and leave an edit mode to flip a boolean.
+        return adjust(i, +1);
+
+    case Kind::Choice:
+    case Kind::Number:
+        // More than two states, and no arrow keys on this hardware, so hand the
+        // rotary over to the value until the user presses again.
+        mEditing = true;
+        applySelection(false);
+        return true;
+
+    default:
+        return false; // Info rows and section headers do nothing
+    }
 }
 
 void SettingsApp::showConfirm(bool show)
@@ -587,6 +633,7 @@ void SettingsApp::onShow(const AppArgs &args)
     const SenderIdentity me = mesh.me();
     snprintf(mNodeLine, sizeof(mNodeLine), "%s  !%08x", me.shortName, (unsigned)me.num);
 
+    mEditing = false;
     showConfirm(false);
     refreshAll();
 }
@@ -642,6 +689,42 @@ bool SettingsApp::onKey(uint32_t k)
         }
     }
 
+    // ---- editing a value ------------------------------------------------
+    //
+    // This device has no arrow keys: the tap map is letters, symbols, Enter,
+    // Tab, Backspace, Esc and space. The rotary encoder is the only continuous
+    // control, and it reports Up/Down. So a row is "entered" for editing and the
+    // rotary then changes the value; without this there is no way to decrease
+    // anything at all.
+    if (mEditing) {
+        switch (k) {
+        case key::Down:
+        case key::RotateCw:
+        case key::Right:
+            adjust(mSelected, +1);
+            return true;
+
+        case key::Up:
+        case key::RotateCcw:
+        case key::Left:
+            adjust(mSelected, -1);
+            return true;
+
+        case key::Enter:
+        case key::Select:
+        case key::Back:
+        case key::Cancel:
+            mEditing = false;
+            applySelection(false);
+            flushIfDirty(true); // commit as soon as they stop fiddling
+            return true;
+
+        default:
+            return true; // stay in edit mode; stray keys must not escape it
+        }
+    }
+
+    // ---- moving around --------------------------------------------------
     switch (k) {
     case key::Up:
     case key::RotateCcw:
@@ -653,6 +736,7 @@ bool SettingsApp::onKey(uint32_t k)
         moveSelection(1);
         return true;
 
+    // Kept for completeness; no key on this board produces them today.
     case key::Left:
         adjust(mSelected, -1);
         return true;

@@ -303,7 +303,22 @@ void NetworkApp::refreshModes()
     const uint8_t active = (uint8_t)coex.mode();
     for (uint8_t i = 0; i < kModeRows; ++i) {
         markSelected(mModeRow[i], i == mSelected);
-        lv_label_set_text(mModeMark[i], i == active ? LV_SYMBOL_OK : "");
+
+        // The running mode shows a tick normally, and says what pressing it will
+        // do once it is the highlighted row -- otherwise "press to turn off" is
+        // invisible until you try it and get told it is already on.
+        if (i != active)
+            lv_label_set_text(mModeMark[i], "");
+        else if (i == mSelected && active != (uint8_t)CoexMode::Off)
+            lv_label_set_text(mModeMark[i], "turn off");
+        else
+            lv_label_set_text(mModeMark[i], LV_SYMBOL_OK);
+
+        lv_obj_set_style_text_color(mModeMark[i],
+                                    lv_color_hex(i == mSelected && i == active && active != (uint8_t)CoexMode::Off
+                                                     ? theme.colors().warn
+                                                     : theme.colors().ok),
+                                    0);
     }
 
     char buf[64];
@@ -422,9 +437,14 @@ void NetworkApp::moveSelection(int8_t delta)
 
 void NetworkApp::requestMode(uint8_t coexMode)
 {
+    // Pressing the mode that is already running means "turn this off". Telling
+    // the user it is already on is technically true and completely useless --
+    // selecting Bluetooth to switch Bluetooth off is the obvious reading of a
+    // list like this, so honour it rather than correcting it.
     if ((CoexMode)coexMode == coex.mode()) {
-        shell.toast("Already active");
-        return;
+        if (coex.mode() == CoexMode::Off)
+            return; // already off; nothing to say
+        coexMode = (uint8_t)CoexMode::Off;
     }
 
     if (coex.requiresReboot((CoexMode)coexMode)) {
@@ -460,7 +480,11 @@ void NetworkApp::activate()
     switch (mPane) {
 
     case Pane::Modes:
-        if (mSelected == (uint8_t)CoexMode::WifiStation) {
+        // Selecting the running mode always means "turn it off", whichever mode
+        // it is -- so that check comes before the per-mode behaviour below.
+        if ((CoexMode)mSelected == coex.mode()) {
+            requestMode(mSelected);
+        } else if (mSelected == (uint8_t)CoexMode::WifiStation) {
             // Joining needs a network chosen first.
             service_.wifiScan();
             showPane(Pane::Scan);

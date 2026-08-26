@@ -87,6 +87,12 @@ class SettingsApp : public App
     uint8_t mRowCount = 0;
     uint8_t mSelected = 0;
 
+    // The pager has no arrow keys -- the only navigation is the rotary (Up/Down)
+    // and Select. So a row is entered for editing, and the rotary then changes
+    // the value instead of moving the selection. See onKey().
+    bool mEditing = false;
+    lv_obj_t *mHint = nullptr;
+
     bool mConfirmVisible = false;
     uint8_t mConfirmChoice = 0; // 0 = cancel, 1 = reset
 
