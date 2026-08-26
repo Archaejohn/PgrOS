@@ -494,6 +494,12 @@ void ConversationApp::applyRowStatus(uint8_t slot)
     case MsgStatus::Delivered:
         text = LV_SYMBOL_OK LV_SYMBOL_OK;
         break;
+    case MsgStatus::Read:
+        // Distinct from delivered: the accent colour from statusColor() carries
+        // the difference, so the glyph stays the same width and the column does
+        // not jitter as a message moves from delivered to read.
+        text = LV_SYMBOL_OK LV_SYMBOL_OK;
+        break;
     case MsgStatus::Failed:
         // Failure has to be unmissable and has to say what to do about it. The
         // retry key is Enter on an empty composer; the composer placeholder

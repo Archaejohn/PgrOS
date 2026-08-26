@@ -145,6 +145,20 @@ class MeshBridge
     // enough that the snapshot is not a meaningful slice of internal RAM.
     static constexpr size_t kNodeSnapshotMax = 48;
 
+    // --- read receipts ----------------------------------------------------
+    //
+    // PgrOS-private, sent on PortNum PRIVATE_APP so any node that does not speak
+    // it simply ignores the packet -- including the official phone apps, which
+    // stay unaffected. Only ever sent for direct threads: a read receipt to a
+    // broadcast channel would be both meaningless and rude on shared airtime.
+    //
+    // MESH TASK ONLY.
+    void sendReadReceipt(const ThreadId &thread, const uint32_t *packetIds, size_t count);
+
+    // Largest number of ids one receipt carries. Beyond this the oldest are
+    // dropped: the newest read marker implies the older ones anyway.
+    static constexpr size_t kMaxReceiptIds = 8;
+
     // --- diagnostics -----------------------------------------------------
 
     uint32_t messagesReceived() const { return mRxCount; }

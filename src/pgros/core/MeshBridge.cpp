@@ -295,6 +295,141 @@ PgrosNodeObserver *gNodeObserver = nullptr;
 // Lifecycle
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Read receipts
+//
+// Meshtastic has no read-receipt concept, so PgrOS defines a small one of its
+// own on PortNum PRIVATE_APP -- the port number reserved for exactly this. Any
+// node that does not speak it drops the packet as an unknown port, so the mesh
+// and the official phone apps are entirely unaffected.
+//
+// Wire format, little-endian, 4 + 4n bytes:
+//
+//   off  size  field
+//     0     1  'P'
+//     1     1  'R'
+//     2     1  version, currently 1
+//     3     1  count, 1..kMaxReceiptIds
+//     4    4n  packet ids that the recipient has now read
+//
+// Receipts are sent unicast to the original sender with want_ack false: an
+// acknowledgement of an acknowledgement is not worth the airtime, and losing one
+// costs nothing more than a message that stays "delivered" instead of "read".
+// ---------------------------------------------------------------------------
+
+static constexpr uint8_t kReceiptMagic0 = 'P';
+static constexpr uint8_t kReceiptMagic1 = 'R';
+static constexpr uint8_t kReceiptVersion = 1;
+
+class PgrosReceiptModule : public MeshModule
+{
+  public:
+    PgrosReceiptModule() : MeshModule("pgros-receipt") {}
+
+  protected:
+    bool wantPacket(const meshtastic_MeshPacket *p) override
+    {
+        return p && p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
+               p->decoded.portnum == meshtastic_PortNum_PRIVATE_APP;
+    }
+
+    ProcessMessage handleReceived(const meshtastic_MeshPacket &mp) override
+    {
+        const uint8_t *b = mp.decoded.payload.bytes;
+        const size_t len = mp.decoded.payload.size;
+
+        // Someone else may legitimately be using PRIVATE_APP for their own
+        // purposes, so validate before believing any of it.
+        if (len < 8 || b[0] != kReceiptMagic0 || b[1] != kReceiptMagic1 || b[2] != kReceiptVersion)
+            return ProcessMessage::CONTINUE;
+
+        const uint8_t count = b[3];
+        if (count == 0 || count > MeshBridge::kMaxReceiptIds || len < (size_t)(4 + 4 * count))
+            return ProcessMessage::CONTINUE;
+
+        // A receipt is only meaningful for the DM thread with whoever sent it.
+        const NodeNum peer = getFrom(&mp);
+        const ThreadId thread = ThreadId::dm(peer);
+
+        for (uint8_t i = 0; i < count; ++i) {
+            const size_t o = 4 + 4 * i;
+            const uint32_t id = (uint32_t)b[o] | ((uint32_t)b[o + 1] << 8) | ((uint32_t)b[o + 2] << 16) |
+                                ((uint32_t)b[o + 3] << 24);
+            if (!id)
+                continue;
+
+            // The store refuses to move a message backwards, so a late receipt
+            // for something already superseded is harmless.
+            chatStore.updateStatus(thread, id, MsgStatus::Read);
+
+            // Built inline rather than via Service's toThreadRef(), so the mesh
+            // layer keeps no dependency on the intent queue above it.
+            ThreadRef ref;
+            ref.direct = 1;
+            ref.channel = 0;
+            ref.peer = peer;
+
+            Event ev{};
+            ev.type = EventType::MessageStatus;
+            ev.atMs = millis();
+            ev.msg.thread = ref;
+            ev.msg.packetId = id;
+            ev.msg.from = peer;
+            ev.msg.status = (uint8_t)MsgStatus::Read;
+            ev.msg.outbound = 1;
+            events.post(ev);
+        }
+
+        LOG_DEBUG("PgrOS: read receipt for %u message(s) from 0x%08x", (unsigned)count, (unsigned)peer);
+
+        // Never STOP: other modules, including RoutingModule which forwards to
+        // the phone, must still see this packet.
+        return ProcessMessage::CONTINUE;
+    }
+};
+
+static PgrosReceiptModule *gReceiptModule = nullptr;
+
+void MeshBridge::sendReadReceipt(const ThreadId &thread, const uint32_t *packetIds, size_t count)
+{
+    if (!thread.direct || !packetIds || !count)
+        return;
+    if (!router || !service)
+        return;
+    if (count > kMaxReceiptIds)
+        count = kMaxReceiptIds;
+
+    meshtastic_MeshPacket *p = router->allocForSending();
+    if (!p) {
+        LOG_WARN("PgrOS: no packet for read receipt");
+        return;
+    }
+
+    p->decoded.portnum = meshtastic_PortNum_PRIVATE_APP;
+    p->to = thread.peer;
+    p->decoded.dest = thread.peer;
+    p->want_ack = false;
+
+    uint8_t *b = p->decoded.payload.bytes;
+    b[0] = kReceiptMagic0;
+    b[1] = kReceiptMagic1;
+    b[2] = kReceiptVersion;
+    b[3] = (uint8_t)count;
+    for (size_t i = 0; i < count; ++i) {
+        const size_t o = 4 + 4 * i;
+        b[o] = (uint8_t)(packetIds[i] & 0xFF);
+        b[o + 1] = (uint8_t)((packetIds[i] >> 8) & 0xFF);
+        b[o + 2] = (uint8_t)((packetIds[i] >> 16) & 0xFF);
+        b[o + 3] = (uint8_t)((packetIds[i] >> 24) & 0xFF);
+    }
+    p->decoded.payload.size = (pb_size_t)(4 + 4 * count);
+
+    // ccToPhone false: this is device-to-device bookkeeping, not something the
+    // phone app has any use for in its message stream.
+    service->sendToMesh(p, RX_SRC_LOCAL, false);
+    LOG_DEBUG("PgrOS: sent read receipt for %u message(s) to 0x%08x", (unsigned)count, (unsigned)thread.peer);
+}
+
 bool MeshBridge::begin()
 {
     if (gStarted)
@@ -318,6 +453,7 @@ bool MeshBridge::begin()
 
     // The MeshModule constructor registers it. There is nothing else to call.
     gRoutingModule = new PgrosRoutingObserver();
+    gReceiptModule = new PgrosReceiptModule();
 
     gNodeObserver = new PgrosNodeObserver();
     gNodeObserver->observe(&nodeDB->newStatus);

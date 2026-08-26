@@ -39,6 +39,7 @@ struct GalleryItem {
     uint32_t bytes;
     uint32_t uploadedAt;
     char uploader[kPortalNickLen];
+    bool hasThumb;     // a <id>t.<ext> companion exists
     uint16_t width;
     uint16_t height;
 };
@@ -96,6 +97,11 @@ class Portal
     // Upload limits. A 4 MB photo would fill the partition, so uploads are
     // capped and the browser is told to downscale before sending.
     static constexpr uint32_t kMaxUploadBytes = 512 * 1024;
+
+    // Thumbnails are produced by the browser before upload -- the ESP32 has no
+    // business decoding JPEG just to make a grid. Capped far tighter than the
+    // full image so a mislabelled form field cannot smuggle a large file in.
+    static constexpr uint32_t kMaxThumbBytes = 24 * 1024;
     static constexpr uint32_t kGalleryReserveBytes = 256 * 1024; // keep free for logs
 
   private:

@@ -413,6 +413,8 @@ Color Theme::statusColor(uint8_t msgStatus) const
         return mPalette.ok;
     case 5: // Failed
         return mPalette.error;
+    case 7: // Read -- the recipient's device confirmed it was opened
+        return mPalette.accent;
     case 6: // Received
         return mPalette.textDim;
     default:

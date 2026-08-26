@@ -151,7 +151,29 @@ void Service::execute(const Intent &in)
 
     case IntentType::MarkThreadRead: {
         ThreadId t = toThreadId(in.thread);
+
+        // Collect the ids we are about to mark read BEFORE clearing the flags,
+        // otherwise there is nothing left to report. Only direct threads get a
+        // receipt: broadcasting "I read your channel message" to everyone in
+        // range would be meaningless and would waste shared airtime.
+        uint32_t receiptIds[MeshBridge::kMaxReceiptIds];
+        size_t receiptCount = 0;
+        if (t.direct && policy.get().sendReadReceipts) {
+            ChatMessage recent[24];
+            const size_t got = chatStore.readTail(t, recent, 24);
+            // Walk newest-first so a burst longer than kMaxReceiptIds reports
+            // the most recent ones; the older reads are implied by them.
+            for (size_t i = got; i-- > 0 && receiptCount < MeshBridge::kMaxReceiptIds;) {
+                const ChatMessage &m = recent[i];
+                if (!(m.flags & kFlagOutbound) && (m.flags & kFlagUnread) && m.packetId)
+                    receiptIds[receiptCount++] = m.packetId;
+            }
+        }
+
         chatStore.markThreadRead(t);
+
+        if (receiptCount)
+            mesh.sendReadReceipt(t, receiptIds, receiptCount);
         Event ev{};
         ev.type = EventType::ThreadRead;
         ev.atMs = millis();

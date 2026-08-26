@@ -131,7 +131,8 @@ static void safeExtension(const char *name, char *out, size_t outLen)
 }
 
 // Validates a stored asset id coming back from the client. Only names we
-// generated can pass: 8 hex digits plus an approved extension.
+// generated can pass: 8 hex digits, an optional 't' marking the thumbnail
+// variant, then an approved extension.
 static bool validAssetName(const char *name)
 {
     if (!name)
@@ -142,9 +143,31 @@ static bool validAssetName(const char *name)
         if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
             return false;
     }
+    if (name[i] == 't')
+        i++;
     char ext[8];
-    safeExtension(name + 8, ext, sizeof(ext));
-    return ext[0] != '\0' && strcmp(name + 8, ext) == 0;
+    safeExtension(name + i, ext, sizeof(ext));
+    return ext[0] != '\0' && strcmp(name + i, ext) == 0;
+}
+
+// True for the thumbnail half of a pair. Thumbnails are stored alongside their
+// full image but hidden from the gallery listing, so the grid shows each photo
+// once.
+static bool isThumbName(const char *name)
+{
+    return name && strlen(name) > 8 && name[8] == 't';
+}
+
+// "/pgros/gallery/a1b2c3d4t.jpg" for a full image named "a1b2c3d4.jpg".
+static void thumbPathFor(const char *fullName, char *out, size_t outLen)
+{
+    out[0] = '\0';
+    if (!fullName || strlen(fullName) < 9)
+        return;
+    char stem[16];
+    memcpy(stem, fullName, 8);
+    stem[8] = '\0';
+    snprintf(out, outLen, "%s/%st%s", kGalleryDir, stem, fullName + 8);
 }
 
 // Copies UTF-8 text, dropping control characters, and NUL-terminates.
@@ -286,7 +309,8 @@ static void handleGalleryList(HTTPRequest *req, HTTPResponse *res)
             out += ",";
         out += "{\"name\":\"";
         jsonEscape(items[i].name, out);
-        out += "\",\"bytes\":" + std::to_string(items[i].bytes) + "}";
+        out += "\",\"bytes\":" + std::to_string(items[i].bytes);
+        out += ",\"thumb\":" + std::string(items[i].hasThumb ? "true" : "false") + "}";
     }
     out += "],\"free\":" + std::to_string(portal.galleryFreeBytes());
     out += ",\"max\":" + std::to_string((uint32_t)Portal::kMaxUploadBytes) + "}";
@@ -363,27 +387,41 @@ static void handleUpload(HTTPRequest *req, HTTPResponse *res)
     bool wrote = false;
     char stored[32] = {0};
 
+    // One id shared by both halves of the upload, chosen HERE. The client's
+    // filename is used only for its extension, which is validated against an
+    // allow-list; the client never gets to influence the path.
+    const unsigned id = (unsigned)(millis() ^ (esp_random() & 0xFFFF));
+
     while (parser.nextField()) {
-        if (parser.getFieldName() != "photo")
+        const std::string field = parser.getFieldName();
+        const bool isThumb = (field == "thumb");
+        if (field != "photo" && !isThumb)
             continue;
 
         char ext[8];
         safeExtension(parser.getFieldFilename().c_str(), ext, sizeof(ext));
         if (!ext[0]) {
+            if (isThumb)
+                continue; // a bad thumbnail is not worth failing the upload over
             sendJson(res, "{\"error\":\"type\"}", 415);
             return;
         }
 
-        // WE choose the name. The client's filename is used only for its
-        // extension, which was just validated against an allow-list.
-        snprintf(stored, sizeof(stored), "%08x%s", (unsigned)(millis() ^ (esp_random() & 0xFFFF)), ext);
+        char name[32];
+        snprintf(name, sizeof(name), "%08x%s%s", id, isThumb ? "t" : "", ext);
 
         char path[96];
-        snprintf(path, sizeof(path), "%s/%s", kGalleryDir, stored);
+        snprintf(path, sizeof(path), "%s/%s", kGalleryDir, name);
+
+        // A thumbnail is small by construction; cap it far tighter than the
+        // full image so a mislabelled field cannot smuggle a large file in.
+        const uint32_t cap = isThumb ? Portal::kMaxThumbBytes : Portal::kMaxUploadBytes;
 
         concurrency::LockGuard g(spiLock);
         File f = galleryFs().open(path, FILE_O_WRITE);
         if (!f) {
+            if (isThumb)
+                continue;
             sendJson(res, "{\"error\":\"open\"}", 500);
             return;
         }
@@ -396,7 +434,7 @@ static void handleUpload(HTTPRequest *req, HTTPResponse *res)
             if (!got)
                 break;
             total += got;
-            if (total > Portal::kMaxUploadBytes) {
+            if (total > cap) {
                 overflow = true;
                 break;
             }
@@ -407,11 +445,17 @@ static void handleUpload(HTTPRequest *req, HTTPResponse *res)
 
         if (overflow) {
             galleryFs().remove(path);
+            if (isThumb)
+                continue; // keep the full image; the grid falls back to it
             sendJson(res, "{\"error\":\"too_large\"}", 413);
             return;
         }
-        wrote = true;
-        break;
+
+        if (!isThumb) {
+            wrote = true;
+            strncpy(stored, name, sizeof(stored) - 1);
+            stored[sizeof(stored) - 1] = '\0';
+        }
     }
 
     if (!wrote) {
@@ -589,14 +633,18 @@ size_t Portal::galleryList(GalleryItem *out, size_t max) const
 
     File f = dir.openNextFile();
     while (f && n < max) {
-        if (!f.isDirectory()) {
-            const char *base = strrchr(f.name(), '/');
-            base = base ? base + 1 : f.name();
+        const char *base = strrchr(f.name(), '/');
+        base = base ? base + 1 : f.name();
+
+        // Thumbnails live in the same directory but are not gallery entries in
+        // their own right; each is reported as a property of its full image.
+        if (!f.isDirectory() && !isThumbName(base)) {
             strncpy(out[n].name, base, sizeof(out[n].name) - 1);
             out[n].name[sizeof(out[n].name) - 1] = '\0';
             out[n].bytes = f.size();
             out[n].uploadedAt = 0;
             out[n].uploader[0] = '\0';
+            out[n].hasThumb = false;
             out[n].width = 0;
             out[n].height = 0;
             n++;
@@ -605,6 +653,15 @@ size_t Portal::galleryList(GalleryItem *out, size_t max) const
         f = dir.openNextFile();
     }
     dir.close();
+
+    // Second pass for thumbnail presence. Done after the walk rather than inside
+    // it because opening a second file while a directory iterator is live is not
+    // something every FS implementation is happy about.
+    for (size_t i = 0; i < n; ++i) {
+        char thumb[96];
+        thumbPathFor(out[i].name, thumb, sizeof(thumb));
+        out[i].hasThumb = galleryFs().exists(thumb);
+    }
     return n;
 }
 
@@ -612,10 +669,22 @@ bool Portal::galleryDelete(const char *name)
 {
     if (!validAssetName(name))
         return false;
+
     char path[96];
     snprintf(path, sizeof(path), "%s/%s", kGalleryDir, name);
+
     concurrency::LockGuard g(spiLock);
-    return galleryFs().remove(path);
+    const bool ok = galleryFs().remove(path);
+
+    // Take the thumbnail with it, or the gallery slowly fills with orphans that
+    // nothing lists and nobody can delete.
+    if (ok && !isThumbName(name)) {
+        char thumb[96];
+        thumbPathFor(name, thumb, sizeof(thumb));
+        if (thumb[0] && galleryFs().exists(thumb))
+            galleryFs().remove(thumb);
+    }
+    return ok;
 }
 
 void Portal::galleryClear()

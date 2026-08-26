@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-08-26, against `meshtastic/firmware` pin `68bfe015e`.
+Last updated: 2026-08-26 (read receipts + gallery thumbnails added), against `meshtastic/firmware` pin `68bfe015e`.
 
 This document exists so nobody has to guess how far along this is. **PgrOS has never
 been flashed to a physical T-LoRa Pager.** Everything below is either "compiles" or
@@ -11,9 +11,9 @@ hardware has been available.
 
 ```
 Environment    Status    Duration
-pgros          SUCCESS   00:03:58
+pgros          SUCCESS   00:03:54
 RAM:   45.6%  (149,368 / 327,680 bytes internal)
-Flash: 40.2%  (2,634,727 / 6,553,600 bytes, app partition)
+Flash: 40.2%  (2,636,307 / 6,553,600 bytes, app partition)
 ```
 
 The whole firmware links, including every app, LVGL 9.3.0, the web portal, and the
@@ -40,6 +40,8 @@ runtime allocation.
 | Radio coexistence state machine (reboot-based BT↔WiFi) | Written, compiles |
 | WiFi scan / join / saved networks / AP mode | Written, compiles |
 | Web portal: chatroom + photo gallery, client-side downscale | Written, compiles |
+| Browser-generated gallery thumbnails, uploaded with the full image | Written, compiles |
+| Read receipts over a private port number | Written, compiles |
 | Silence policy (amp mute, haptics, buzzer), silent by default | Written, compiles |
 | Crash / boot-loop capture | Written, compiles |
 | Keyboard + rotary input bridge | Written, compiles |
@@ -55,9 +57,6 @@ runtime allocation.
   The WiFi mesh (pagers extending each other's network with a shared chatroom and
   gallery) is also not implemented — the current portal is a single-device AP. This
   is the largest remaining feature.
-* **The gallery has no thumbnailing.** Full images are sent to the browser and scaled
-  in CSS. On a large gallery that will be slow over the pager's AP.
-* **Read receipts** have a settings toggle but no wire implementation.
 * **`Policy.alertsWhileCharging`** is stored and shown but not enforced; the charging
   state arrives on the event bus and `PolicyStore` does not track it. Marked with a
   comment in `Silence.cpp` rather than silently ignored.

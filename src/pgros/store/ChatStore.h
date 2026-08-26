@@ -40,6 +40,7 @@ enum class MsgStatus : uint8_t {
     Delivered = 4, // acknowledged
     Failed = 5,    // routing error, or retransmits exhausted
     Received = 6,  // inbound message
+    Read = 7,      // recipient's device reported it read (PgrOS read receipt)
 };
 
 enum MsgFlags : uint8_t {

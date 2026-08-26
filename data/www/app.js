@@ -123,9 +123,11 @@
           cell.className = 'cell';
           var img = document.createElement('img');
           img.loading = 'lazy';
-          img.src = '/photo/' + it.name;
+          // Grid shows the thumbnail; the viewer fetches the full image only
+          // when someone actually taps it.
+          img.src = '/photo/' + (it.thumb ? thumbName(it.name) : it.name);
           img.addEventListener('click', function () {
-            $('viewerImg').src = img.src;
+            $('viewerImg').src = '/photo/' + it.name;
             $('viewer').hidden = false;
           });
           var del = document.createElement('button');
@@ -150,38 +152,65 @@
     $('viewerImg').src = '';
   });
 
-  /* Downscale before upload.
+  /* Downscale before upload, and produce a thumbnail while we already have the
+     image decoded.
+
      A modern phone photo is 3-5 MB; the device cap is 512 KB and the whole
-     partition is a few megabytes. Resizing in a canvas before sending is the
-     difference between this feature working and every upload being rejected. */
-  function shrink(file) {
+     partition is a few megabytes, so resizing here is the difference between
+     this working and every upload being rejected.
+
+     The thumbnail matters for a different reason: the pager serves the gallery
+     over its own access point, and sending twenty full-size images to fill a
+     grid of 100px squares is painfully slow. The ESP32 has no business decoding
+     JPEG to make thumbnails itself, so the browser does it -- once, off the same
+     decode as the full image. */
+  function renderTo(img, maxDim, maxBytes, quality) {
+    var w = img.width, h = img.height;
+    if (w > maxDim || h > maxDim) {
+      if (w > h) { h = Math.round(h * maxDim / w); w = maxDim; }
+      else { w = Math.round(w * maxDim / h); h = maxDim; }
+    }
+    var c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    c.getContext('2d').drawImage(img, 0, 0, w, h);
+
+    return new Promise(function (resolve) {
+      // Step the quality down until it fits, rather than failing outright.
+      (function attempt(q) {
+        c.toBlob(function (blob) {
+          if (!blob) { resolve(null); return; }
+          if (blob.size <= maxBytes || q <= 0.35) { resolve(blob); return; }
+          attempt(q - 0.15);
+        }, 'image/jpeg', q);
+      })(quality);
+    });
+  }
+
+  function prepare(file) {
     return new Promise(function (resolve) {
       var img = new Image();
       var url = URL.createObjectURL(file);
       img.onload = function () {
         URL.revokeObjectURL(url);
-        var max = 1280;
-        var w = img.width, h = img.height;
-        if (w > max || h > max) {
-          if (w > h) { h = Math.round(h * max / w); w = max; }
-          else { w = Math.round(w * max / h); h = max; }
-        }
-        var c = document.createElement('canvas');
-        c.width = w; c.height = h;
-        c.getContext('2d').drawImage(img, 0, 0, w, h);
-
-        // Step the quality down until it fits, rather than failing outright.
-        (function attempt(q) {
-          c.toBlob(function (blob) {
-            if (!blob) { resolve(file); return; }
-            if (blob.size <= maxBytes || q <= 0.4) { resolve(blob); return; }
-            attempt(q - 0.15);
-          }, 'image/jpeg', q);
-        })(0.82);
+        Promise.all([
+          renderTo(img, 1280, maxBytes, 0.82),
+          // 320px covers a 2x display of the ~104px grid cell.
+          renderTo(img, 320, 24 * 1024, 0.7)
+        ]).then(function (parts) {
+          resolve({ full: parts[0] || file, thumb: parts[1] });
+        });
       };
-      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.onerror = function () {
+        URL.revokeObjectURL(url);
+        resolve({ full: file, thumb: null });
+      };
       img.src = url;
     });
+  }
+
+  /* "a1b2c3d4.jpg" -> "a1b2c3d4t.jpg". Mirrors thumbPathFor() on the device. */
+  function thumbName(name) {
+    return name.slice(0, 8) + 't' + name.slice(8);
   }
 
   $('file').addEventListener('change', function (e) {
@@ -201,9 +230,13 @@
         return;
       }
       var f = files.shift();
-      shrink(f).then(function (blob) {
+      prepare(f).then(function (parts) {
+        var stem = (f.name || 'photo').replace(/\.[^.]+$/, '');
         var fd = new FormData();
-        fd.append('photo', blob, (f.name || 'photo').replace(/\.[^.]+$/, '') + '.jpg');
+        fd.append('photo', parts.full, stem + '.jpg');
+        // Both halves go in one request so they share an id on the device and
+        // cannot end up orphaned by a dropped second request.
+        if (parts.thumb) fd.append('thumb', parts.thumb, stem + '.jpg');
         return fetch('/api/upload', { method: 'POST', body: fd });
       }).then(function (r) {
         if (r && !r.ok) console.warn('upload rejected', r.status);
