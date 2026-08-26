@@ -1,6 +1,7 @@
 #ifdef PGROS
 
 #include "net/Portal.h"
+#include "net/PortalAssets.h"
 
 #include "configuration.h"
 
@@ -491,44 +492,47 @@ static void handleUpload(HTTPRequest *req, HTTPResponse *res)
     sendJson(res, out);
 }
 
-// GET /* — static assets from LittleFS
-static void handleStatic(HTTPRequest *req, HTTPResponse *res)
+// Look up a built-in asset. Declared in PortalAssets.h; implemented here so the
+// generated file stays pure data.
+const EmbeddedAsset *findEmbeddedAsset(const char *requestPath)
 {
-    std::string reqPath = req->getRequestString();
-    if (reqPath.empty() || reqPath == "/")
-        reqPath = "/index.html";
+    if (!requestPath || !requestPath[0])
+        return nullptr;
+    const char *want = (strcmp(requestPath, "/") == 0) ? "/index.html" : requestPath;
+    for (size_t i = 0; i < kEmbeddedAssetCount; ++i)
+        if (strcmp(kEmbeddedAssets[i].path, want) == 0)
+            return &kEmbeddedAssets[i];
+    return nullptr;
+}
 
-    // Refuse anything that tries to escape the asset directory.
-    if (reqPath.find("..") != std::string::npos) {
-        res->setStatusCode(400);
-        res->print("bad path");
-        return;
-    }
+static const char *mimeFor(const char *path)
+{
+    if (strstr(path, ".html"))
+        return "text/html; charset=utf-8";
+    if (strstr(path, ".css"))
+        return "text/css; charset=utf-8";
+    if (strstr(path, ".js"))
+        return "application/javascript; charset=utf-8";
+    if (strstr(path, ".svg"))
+        return "image/svg+xml";
+    if (strstr(path, ".json"))
+        return "application/json";
+    return "text/plain; charset=utf-8";
+}
 
-    char path[128];
-    snprintf(path, sizeof(path), "%s%s", kWwwDir, reqPath.c_str());
-
+static bool serveFromFs(fs::FS &fsys, const char *path, const char *mime, HTTPResponse *res)
+{
     concurrency::LockGuard g(spiLock);
-    File f = FSCom.open(path, FILE_O_READ);
-    if (!f) {
-        res->setStatusCode(404);
-        res->setHeader("Content-Type", "text/html");
-        res->print("<h1>PgrOS</h1><p>Portal assets are not installed. "
-                   "Upload the filesystem image with <code>build.ps1 -Target fs</code>.</p>");
-        return;
+
+    File f = fsys.open(path, FILE_O_READ);
+    if (!f)
+        return false;
+    if (f.isDirectory()) {
+        f.close();
+        return false;
     }
 
-    const char *type = "text/plain";
-    if (reqPath.find(".html") != std::string::npos)
-        type = "text/html";
-    else if (reqPath.find(".css") != std::string::npos)
-        type = "text/css";
-    else if (reqPath.find(".js") != std::string::npos)
-        type = "application/javascript";
-    else if (reqPath.find(".svg") != std::string::npos)
-        type = "image/svg+xml";
-    res->setHeader("Content-Type", type);
-
+    res->setHeader("Content-Type", mime);
     uint8_t buf[512];
     while (f.available()) {
         const size_t got = f.read(buf, sizeof(buf));
@@ -537,6 +541,52 @@ static void handleStatic(HTTPRequest *req, HTTPResponse *res)
         res->write(buf, got);
     }
     f.close();
+    return true;
+}
+
+// GET /*  -- the web UI.
+//
+// Three sources, in order: the SD card, internal flash, then the copy built into
+// the firmware. The on-disk locations come first so the portal can be customised
+// without rebuilding, and the built-in copy means it works on a device that has
+// never had the filesystem image flashed -- which matters, because that image is
+// a whole-partition write that would take the Meshtastic config and the node
+// keypair with it.
+static void handleStatic(HTTPRequest *req, HTTPResponse *res)
+{
+    std::string reqPath = req->getRequestString();
+    if (reqPath.empty() || reqPath == "/")
+        reqPath = "/index.html";
+
+    // Refuse anything that tries to climb out of the asset directory.
+    if (reqPath.find("..") != std::string::npos || reqPath.size() > 64) {
+        res->setStatusCode(400);
+        res->print("bad path");
+        return;
+    }
+
+    const char *mime = mimeFor(reqPath.c_str());
+
+    char path[128];
+    snprintf(path, sizeof(path), "%s%s", kWwwDir, reqPath.c_str());
+
+#if defined(HAS_SDCARD)
+    if (sUseSd && serveFromFs(SD, path, mime, res))
+        return;
+#endif
+
+    if (serveFromFs(FSCom, path, mime, res))
+        return;
+
+    if (const EmbeddedAsset *a = findEmbeddedAsset(reqPath.c_str())) {
+        res->setHeader("Content-Type", a->mime);
+        res->write(a->data, a->len);
+        return;
+    }
+
+    res->setStatusCode(404);
+    res->setHeader("Content-Type", "text/plain");
+    res->print("not found");
 }
 
 // ---------------------------------------------------------------------------
