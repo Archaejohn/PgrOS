@@ -1,0 +1,18 @@
+diff --git a/src/motion/BHI260APSensor.cpp b/src/motion/BHI260APSensor.cpp
+index 90c6e1f82..3f2d6cd55 100644
+--- a/src/motion/BHI260APSensor.cpp
++++ b/src/motion/BHI260APSensor.cpp
+@@ -64,8 +64,13 @@ int32_t BHI260APSensor::runOnce()
+     if (stepCounter->hasUpdated()) {
+         steps = stepCounter->getStepCount();
+         LOG_WARN("Step count updated: %u", steps);
++        // `steps` is a member of the real graphics::Screen only. When the stock
++        // UI is compiled out (HAS_SCREEN 0) the no-op stub in Screen.h has no
++        // such member, so this must be guarded or the file fails to compile.
++#if HAS_SCREEN
+         if (screen)
+             screen->steps = steps;
++#endif
+     }
+     // LOG_WARN("Step count: %u", stepCounter->getStepCount());
+     // if (sensor.readIrqStatus()) {

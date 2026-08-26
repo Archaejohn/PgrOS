@@ -120,7 +120,7 @@
 // a frame boundary without a much larger magic.
 //
 
-#include "pgros/store/ChatStore.h"
+#include "store/ChatStore.h"
 
 #include "FSCommon.h"
 #include "SPILock.h"

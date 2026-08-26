@@ -15,6 +15,7 @@
 
 #include "App.h"
 #include "core/EventBus.h"
+#include <stddef.h>
 #include <stdint.h>
 
 namespace pgros {

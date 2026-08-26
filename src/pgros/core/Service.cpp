@@ -91,7 +91,7 @@ bool Service::post(const Intent &in)
         return false;
     }
     if (xQueueSend((QueueHandle_t)mQueue, &in, 0) != pdTRUE) {
-        mDropped++;
+        mDropped = mDropped + 1;
         LOG_WARN("PgrOS: intent queue full, dropped type %d (total %u)", (int)in.type, (unsigned)mDropped);
         return false;
     }

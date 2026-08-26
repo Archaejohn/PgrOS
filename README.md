@@ -22,13 +22,18 @@ with the official Meshtastic phone apps.
 * **History that survives reboots.** Chat is an append-only log on flash, not RAM. Every
   message stores a snapshot of who sent it, so channel history stays attributable even
   after a node ages out of the node database.
-* **Boots fast.** First pixel in ~120 ms, interactive in well under half a second, because
-  the UI runs as its own task and never waits for the LoRa stack. See
-  [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#boot-how-fast-is-achieved).
+* **Built to boot fast.** The UI runs as its own task and never waits for the LoRa stack,
+  so the panel is interactive while the radio is still calibrating. The design targets
+  first pixel in ~120 ms and interactive well under half a second — those are targets
+  derived from what work sits on each path, **not measurements**, since this has not run
+  on hardware yet. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#boot-how-fast-is-achieved).
 * **Silent unless you ask.** No boot chirp, no keypress beep. The amplifier is muted before
   any audio code can initialise.
-* **Bluetooth and WiFi never run together.** A single state machine owns both radios and
-  always tears one down before bringing the other up.
+* **Bluetooth and WiFi never run together.** A single state machine owns both radios.
+  Switching between Bluetooth and WiFi restarts the device, because on ESP32 the Bluetooth
+  controller's memory is released irreversibly and cannot be reclaimed without a reboot —
+  PgrOS says so before it does it, rather than appearing to hang. Off ↔ WiFi client ↔
+  hotspot are live transitions.
 * **A WiFi portal.** Run the pager as an access point and get a browser-based chatroom and
   photo gallery your phone can upload to.
 * **Bluetooth pairing you can actually complete.** The six-digit passkey is shown on screen
@@ -71,6 +76,7 @@ Meshtastic — there is no divergence to untangle later.
 |---|---------|---------|
 | 0001 | T-LoRa Pager keyboard emits random characters: the TCA8418 event FIFO is read as if it were an array, skipping events and decoding stale slots as keystrokes | [writeup](patches/upstream/0001-tlora-pager-keyboard/README.md) |
 | 0002 | I²C keyboards are polled at a flat 300 ms and characters are emitted on key release, so typing lags by up to a third of a second per character | [writeup](patches/upstream/0002-keyboard-poll-latency/README.md) |
+| 0003 | `BHI260APSensor.cpp` writes `screen->steps` unguarded, so any board with that IMU fails to build when the stock screen is excluded | [writeup](patches/upstream/0003-bhi260ap-screen-steps/README.md) |
 
 ## Documentation
 

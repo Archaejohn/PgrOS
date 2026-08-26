@@ -17,6 +17,7 @@
 // and the gallery. Keep it that way; a captive local web UI is not the place to
 // put node administration.
 
+#include <stddef.h>
 #include <stdint.h>
 
 namespace pgros {

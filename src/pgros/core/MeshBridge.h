@@ -33,6 +33,27 @@ struct SenderIdentity {
     bool known = false; // false when NodeDB has no record; names are synthesised
 };
 
+// One node as the Contacts list renders it. A frozen snapshot, never a pointer
+// into NodeDB: the UI task reads these long after the mesh task has moved on,
+// and meshNodes is an unguarded vector that reallocates on insert.
+struct NodeBrief {
+    uint32_t num = 0;
+    uint32_t lastHeard = 0; // epoch seconds; 0 when never heard / clock unset
+    float snr = 0.0f;
+    uint8_t hopsAway = 0;
+    uint8_t flags = 0; // NodeBriefFlags
+    char shortName[kMaxShortName] = {0};
+    char longName[kMaxLongName] = {0};
+};
+
+enum NodeBriefFlags : uint8_t {
+    kNodeSelf = 1 << 0,
+    kNodeViaMqtt = 1 << 1,
+    kNodeFavorite = 1 << 2,
+    kNodeHopsKnown = 1 << 3, // hopsAway is meaningful rather than defaulted
+    kNodeSnrKnown = 1 << 4,
+};
+
 // A message the UI wants to send.
 struct OutgoingMessage {
     ThreadId thread;
@@ -97,6 +118,32 @@ class MeshBridge
 
     // Human-readable title for a thread (channel name, or peer long name).
     void threadTitle(const ThreadId &thread, char *out, size_t outLen) const;
+
+    // --- nodes -----------------------------------------------------------
+    //
+    // The Contacts screen needs a node list, and walking NodeDB from the UI
+    // task is exactly the race this class exists to prevent. So the mesh task
+    // publishes a snapshot instead: refreshNodes() runs on the main task (from
+    // begin(), from inbound text, and from the NodeDB change observer, which is
+    // already throttled), and listNodes() hands the UI task a copy of it.
+    //
+    // The handoff is a seqlock: the writer bumps a generation counter either
+    // side of the copy and the reader retries if it moved. That is enough for
+    // two tasks on a cache-coherent dual-core part, and it costs the writer
+    // nothing in the common case where nobody is reading.
+
+    // Rebuild the snapshot from NodeDB. MESH TASK ONLY.
+    void refreshNodes();
+
+    // Copy up to `max` nodes, most recently heard first. Safe from any task.
+    size_t listNodes(NodeBrief *out, size_t max) const;
+
+    // Number of nodes in the snapshot (capped at kNodeSnapshotMax).
+    uint16_t nodeCount() const;
+
+    // Deep enough that a pager's Contacts list never feels truncated, small
+    // enough that the snapshot is not a meaningful slice of internal RAM.
+    static constexpr size_t kNodeSnapshotMax = 48;
 
     // --- diagnostics -----------------------------------------------------
 

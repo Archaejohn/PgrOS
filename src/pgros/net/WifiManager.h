@@ -11,6 +11,7 @@
 // arrive as EventType::WifiScanDone; the UI shows a spinner in between. A
 // synchronous scan takes several seconds and would freeze the interface.
 
+#include <stddef.h>
 #include <stdint.h>
 
 namespace pgros {

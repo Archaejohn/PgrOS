@@ -130,12 +130,14 @@
  * - LV_OS_MQX
  * - LV_OS_SDL2
  * - LV_OS_CUSTOM */
-/* PgrOS: LVGL lives on a dedicated UI task (see core/Boot.cpp). Selecting
- * FreeRTOS costs one recursive mutex and makes lv_timer_handler() self-guard,
- * and -- more importantly -- gives mesh/radio tasks a legal way in via
- * lv_lock()/lv_unlock(). Any PgrOS code that touches an lv_obj_t from a task
- * other than the UI task MUST take lv_lock() first. */
-#define LV_USE_OS   LV_OS_FREERTOS
+/* PgrOS confines every LVGL call to the UI task (see ui/Shell.cpp), so LVGL
+ * needs no locking of its own. Work originating on the mesh or radio tasks
+ * reaches the UI as an Event rather than as a direct call; see core/EventBus.h. */
+/* PgrOS drives lv_timer_handler() itself from a single dedicated UI task, so
+ * LVGL needs no OS abstraction of its own. LV_OS_FREERTOS additionally pulls in
+ * lv_freertos.c, which includes <atomic.h> from FreeRTOS-Plus -- a header
+ * ESP-IDF does not ship, so that setting does not even compile here. */
+#define LV_USE_OS   LV_OS_NONE
 
 #if LV_USE_OS == LV_OS_CUSTOM
     #define LV_OS_CUSTOM_INCLUDE <stdint.h>

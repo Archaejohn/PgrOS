@@ -45,6 +45,7 @@
 
 #include <Arduino.h>
 #include <algorithm>
+#include <atomic>
 #include <stdio.h>
 #include <string.h>
 
@@ -71,6 +72,18 @@ constexpr size_t kPendingMax = 16;
 constexpr uint32_t kNodeEventThrottleMs = 1500;
 
 bool gStarted = false;
+
+// ---------------------------------------------------------------------------
+// Node snapshot.
+//
+// Published by the mesh task, read by the UI task. See the seqlock note in
+// MeshBridge.h. gNodeGen is odd while a write is in progress; a reader that
+// sees an odd generation, or a generation that moved across its copy, retries.
+// ---------------------------------------------------------------------------
+NodeBrief gNodes[MeshBridge::kNodeSnapshotMax];
+uint16_t gNodeCount = 0;
+std::atomic<uint32_t> gNodeGen{0};
+
 
 struct PendingTx {
     uint32_t packetId = 0; // 0 == free slot
@@ -243,6 +256,11 @@ class PgrosNodeObserver : public Observer<const meshtastic::NodeStatus *>
             return 0; // throttled: a busy mesh notifies far faster than the UI can use
         mLastPostMs = now;
 
+        // We are on the mesh task here, which is the only place NodeDB may be
+        // walked. Republish the snapshot before telling the UI anything changed,
+        // so a Contacts screen reacting to this event reads fresh data.
+        mesh.refreshNodes();
+
         Event ev = {};
         ev.type = EventType::NodeUpdated;
         ev.atMs = now;
@@ -305,6 +323,7 @@ bool MeshBridge::begin()
     gNodeObserver->observe(&nodeDB->newStatus);
 
     gStarted = true;
+    refreshNodes();
     LOG_INFO("MeshBridge up: node 0x%08x, %u channels", (unsigned)myNodeNum(), (unsigned)channelCount());
     return true;
 }
@@ -396,6 +415,10 @@ void MeshBridge::onTextMessage(const void *packet)
         LOG_ERROR("MeshBridge: chat append failed for id=0x%08x", (unsigned)mp.id);
 
     mRxCount++;
+
+    // Hearing a node is exactly when its Contacts row goes stale, and we are
+    // already on the task that may read NodeDB.
+    refreshNodes();
 
     // The UI task learns about this only from the event; it must never be handed
     // the packet, which is about to be recycled into the pool.
@@ -597,6 +620,120 @@ SenderIdentity MeshBridge::me() const
         out.known = true;
     }
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Nodes
+// ---------------------------------------------------------------------------
+
+void MeshBridge::refreshNodes()
+{
+    // MESH TASK ONLY: nodeDB->meshNodes is an unguarded vector.
+    if (!nodeDB)
+        return;
+
+    const uint32_t self = myNodeNum();
+
+    // Build into locals first, then publish under the seqlock, so the window in
+    // which a reader can see a torn snapshot is one memcpy long rather than a
+    // whole NodeDB walk.
+    static NodeBrief staging[kNodeSnapshotMax];
+    uint16_t count = 0;
+
+    const size_t total = nodeDB->numMeshNodes;
+    for (size_t i = 0; i < total; i++) {
+        const meshtastic_NodeInfoLite *n = nodeDB->getMeshNodeByIndex(i);
+        if (!n || !n->num)
+            continue;
+
+        NodeBrief b;
+        b.num = n->num;
+        b.lastHeard = n->last_heard;
+        b.hopsAway = n->has_hops_away ? n->hops_away : 0;
+        b.snr = n->snr;
+
+        uint8_t flags = 0;
+        if (n->num == self)
+            flags |= kNodeSelf;
+        if (nodeInfoLiteViaMqtt(n))
+            flags |= kNodeViaMqtt;
+        if (nodeInfoLiteIsFavorite(n))
+            flags |= kNodeFavorite;
+        if (n->has_hops_away)
+            flags |= kNodeHopsKnown;
+        if (nodeInfoLiteHasSnr(n))
+            flags |= kNodeSnrKnown;
+        b.flags = flags;
+
+        // Bounded by the SOURCE field width: long_name is char[25] here and
+        // char[40] in our snapshot, so sizeof(dst) is the wrong bound.
+        if (nodeInfoLiteHasUser(n)) {
+            copyField(b.shortName, sizeof(b.shortName), n->short_name, sizeof(n->short_name));
+            copyField(b.longName, sizeof(b.longName), n->long_name, sizeof(n->long_name));
+        }
+        if (!b.shortName[0])
+            snprintf(b.shortName, sizeof(b.shortName), "%04x", (unsigned)(b.num & 0xffff));
+        if (!b.longName[0])
+            snprintf(b.longName, sizeof(b.longName), "!%08x", (unsigned)b.num);
+
+        if (count < kNodeSnapshotMax) {
+            staging[count++] = b;
+            continue;
+        }
+
+        // Full. Keep the most recently heard, so a mesh larger than the buffer
+        // degrades into "the nodes you actually care about" rather than "the
+        // first 48 NodeDB happens to hold".
+        uint16_t oldest = 0;
+        for (uint16_t j = 1; j < count; j++)
+            if (staging[j].lastHeard < staging[oldest].lastHeard)
+                oldest = j;
+        if (b.lastHeard > staging[oldest].lastHeard)
+            staging[oldest] = b;
+    }
+
+    std::sort(staging, staging + count,
+              [](const NodeBrief &a, const NodeBrief &b) { return a.lastHeard > b.lastHeard; });
+
+    // Publish. Odd generation == write in progress.
+    gNodeGen.fetch_add(1, std::memory_order_acq_rel);
+    std::atomic_thread_fence(std::memory_order_release);
+    memcpy(gNodes, staging, sizeof(NodeBrief) * count);
+    gNodeCount = count;
+    std::atomic_thread_fence(std::memory_order_release);
+    gNodeGen.fetch_add(1, std::memory_order_acq_rel);
+}
+
+size_t MeshBridge::listNodes(NodeBrief *out, size_t max) const
+{
+    if (!out || !max)
+        return 0;
+
+    for (int attempt = 0; attempt < 4; attempt++) {
+        const uint32_t before = gNodeGen.load(std::memory_order_acquire);
+        if (before & 1u)
+            continue; // a write is in flight; try again
+
+        size_t n = gNodeCount;
+        if (n > max)
+            n = max;
+        memcpy(out, gNodes, sizeof(NodeBrief) * n);
+
+        std::atomic_thread_fence(std::memory_order_acquire);
+        if (gNodeGen.load(std::memory_order_acquire) == before)
+            return n;
+    }
+
+    // Four collisions in a row means the mesh task is republishing continuously,
+    // which it cannot do -- the observer is throttled. Report nothing rather
+    // than hand back a torn read.
+    return 0;
+}
+
+uint16_t MeshBridge::nodeCount() const
+{
+    const uint16_t n = gNodeCount;
+    return n > kNodeSnapshotMax ? (uint16_t)kNodeSnapshotMax : n;
 }
 
 // ---------------------------------------------------------------------------

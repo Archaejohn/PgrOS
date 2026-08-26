@@ -26,6 +26,9 @@
 
 #include "configuration.h"
 
+#include "mesh/wifi/WiFiAPClient.h" // getWifiDisconnectReason()
+#include "net/Portal.h"
+
 #include "FSCommon.h"
 #include "NodeDB.h"
 #include "SafeFile.h"
@@ -46,6 +49,15 @@
 
 namespace pgros
 {
+
+// Defined at the bottom of this file; RadioCoex.cpp declares the same three.
+// They are the only entry points allowed to touch the WiFi stack directly.
+namespace detail
+{
+bool wifiBringUpSta();
+bool wifiBringUpAp();
+void wifiTearDown();
+} // namespace detail
 
 WifiManager wifi;
 

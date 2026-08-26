@@ -90,7 +90,7 @@ bool EventBus::post(const Event &ev)
     if (!mQueue) {
         // Producers legitimately run before begin() during early boot. Count it
         // as a drop rather than crashing; the diagnostics screen will show it.
-        mDropped++;
+        mDropped = mDropped + 1;
         return false;
     }
 
@@ -98,7 +98,7 @@ bool EventBus::post(const Event &ev)
     // paths; blocking here to wait for the UI task would add jitter to LoRa
     // timing. A dropped status update is always the cheaper failure.
     if (xQueueSend(handleOf(mQueue), &ev, 0) != pdTRUE) {
-        mDropped++;
+        mDropped = mDropped + 1;
         return false;
     }
     return true;
@@ -107,7 +107,7 @@ bool EventBus::post(const Event &ev)
 bool EventBus::postFromIsr(const Event &ev)
 {
     if (!mQueue) {
-        mDropped++;
+        mDropped = mDropped + 1;
         return false;
     }
 
@@ -118,7 +118,7 @@ bool EventBus::postFromIsr(const Event &ev)
         // Deliberately a plain increment and not an atomic: mDropped is only
         // ever read for display, and taking a lock in an ISR to protect a
         // counter would be worse than the occasional lost count.
-        mDropped++;
+        mDropped = mDropped + 1;
     }
 
     // If unblocking the UI task made a higher-priority task runnable, ask for a

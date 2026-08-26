@@ -29,6 +29,7 @@ using namespace httpsserver;
 #include <SD.h>
 #endif
 
+#include <esp_task_wdt.h>
 #include <string.h>
 
 namespace pgros
