@@ -70,6 +70,7 @@ Meshtastic — there is no divergence to untangle later.
 | # | Summary | Writeup |
 |---|---------|---------|
 | 0001 | T-LoRa Pager keyboard emits random characters: the TCA8418 event FIFO is read as if it were an array, skipping events and decoding stale slots as keystrokes | [writeup](patches/upstream/0001-tlora-pager-keyboard/README.md) |
+| 0002 | I²C keyboards are polled at a flat 300 ms and characters are emitted on key release, so typing lags by up to a third of a second per character | [writeup](patches/upstream/0002-keyboard-poll-latency/README.md) |
 
 ## Documentation
 

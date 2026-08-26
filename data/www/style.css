@@ -1,0 +1,160 @@
+/* PgrOS portal.
+   Mobile first: the only realistic client is a phone that has just joined the
+   pager's access point. Dark, because the device UI is dark and because people
+   use this thing outdoors and at night. No external fonts or assets -- there is
+   no internet on this AP. */
+
+:root {
+  --bg: #121418;
+  --surface: #1b1f26;
+  --surface-2: #232936;
+  --border: #2c3340;
+  --text: #e8eaed;
+  --dim: #9aa3b2;
+  --faint: #626b7a;
+  --accent: #6e9eff;
+  --accent-ink: #0b1220;
+  --mesh: #f0a854;
+  --radius: 12px;
+  --bar: 52px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+
+/* ── Top bar ─────────────────────────────────────────── */
+.bar {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--bar);
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 14px; padding-top: env(safe-area-inset-top);
+  background: rgba(18, 20, 24, .92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+  z-index: 20;
+}
+.brand { font-weight: 650; letter-spacing: -.2px; }
+.brand span { color: var(--accent); }
+
+.tabs { display: flex; gap: 4px; margin-left: auto; }
+.tab {
+  appearance: none; border: 0; cursor: pointer;
+  background: transparent; color: var(--dim);
+  font: inherit; font-size: 14px; font-weight: 550;
+  padding: 7px 13px; border-radius: 999px;
+}
+.tab.is-active { background: var(--surface-2); color: var(--text); }
+
+/* ── Views ───────────────────────────────────────────── */
+.view { display: none; }
+.view.is-active { display: block; }
+
+.empty { color: var(--faint); text-align: center; padding: 40px 20px; font-size: 14px; }
+
+/* ── Chatroom ────────────────────────────────────────── */
+.messages {
+  padding: calc(var(--bar) + env(safe-area-inset-top) + 10px) 12px 96px;
+  min-height: 100vh;
+}
+.msg { margin: 0 0 10px; max-width: 82%; }
+.msg .who {
+  font-size: 12px; font-weight: 600; color: var(--accent);
+  margin: 0 0 3px 3px;
+}
+.msg.mesh .who { color: var(--mesh); }
+.msg .body {
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); border-bottom-left-radius: 4px;
+  padding: 8px 11px; word-wrap: break-word; white-space: pre-wrap;
+}
+.msg.me { margin-left: auto; }
+.msg.me .who { display: none; }
+.msg.me .body {
+  background: var(--accent); color: var(--accent-ink);
+  border-color: transparent;
+  border-radius: var(--radius); border-bottom-right-radius: 4px;
+}
+.msg .time { font-size: 11px; color: var(--faint); margin: 3px 0 0 3px; }
+.msg.me .time { text-align: right; margin-right: 3px; }
+
+.composer {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; gap: 8px; align-items: center;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: rgba(18, 20, 24, .94);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--border);
+}
+.nick, .text {
+  appearance: none; font: inherit; color: var(--text);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 999px; padding: 10px 14px; min-width: 0;
+}
+.nick { width: 92px; flex: none; }
+.text { flex: 1; }
+.nick:focus, .text:focus { outline: none; border-color: var(--accent); }
+.send {
+  appearance: none; border: 0; cursor: pointer; flex: none;
+  width: 40px; height: 40px; border-radius: 999px;
+  background: var(--accent); color: var(--accent-ink);
+  font-size: 19px; font-weight: 700;
+}
+.send:disabled { opacity: .4; }
+
+/* ── Gallery ─────────────────────────────────────────── */
+#view-gallery { padding: calc(var(--bar) + env(safe-area-inset-top) + 12px) 12px 28px; }
+
+.uploadbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.btn {
+  display: inline-block; cursor: pointer;
+  background: var(--accent); color: var(--accent-ink);
+  font-weight: 600; font-size: 14px;
+  padding: 9px 16px; border-radius: 999px;
+}
+.quota { color: var(--faint); font-size: 13px; }
+
+.progress { height: 3px; background: var(--surface-2); border-radius: 999px; margin-bottom: 12px; overflow: hidden; }
+#progressBar { height: 100%; width: 0; background: var(--accent); transition: width .18s; }
+
+.grid {
+  display: grid; gap: 6px;
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+}
+.grid .empty { grid-column: 1 / -1; }
+.cell {
+  position: relative; aspect-ratio: 1;
+  border-radius: 10px; overflow: hidden;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cell .del {
+  position: absolute; top: 5px; right: 5px;
+  width: 26px; height: 26px; border: 0; border-radius: 999px; cursor: pointer;
+  background: rgba(0, 0, 0, .58); color: #fff; font-size: 14px; line-height: 1;
+}
+
+/* ── Viewer ──────────────────────────────────────────── */
+.viewer {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(0, 0, 0, .94);
+  display: flex; align-items: center; justify-content: center;
+}
+.viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.viewerClose {
+  position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 14px;
+  width: 38px; height: 38px; border: 0; border-radius: 999px; cursor: pointer;
+  background: rgba(255, 255, 255, .14); color: #fff; font-size: 16px;
+}
+
+@media (min-width: 700px) {
+  .messages, #view-gallery { max-width: 720px; margin: 0 auto; }
+  .composer > * { max-width: 720px; }
+}

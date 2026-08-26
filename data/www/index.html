@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#121418">
+<title>PgrOS Portal</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">Pgr<span>OS</span></div>
+  <nav class="tabs" role="tablist">
+    <button class="tab is-active" data-view="room" role="tab">Room</button>
+    <button class="tab" data-view="gallery" role="tab">Gallery</button>
+  </nav>
+</header>
+
+<!-- ── Chatroom ─────────────────────────────────────────── -->
+<main id="view-room" class="view is-active">
+  <div id="messages" class="messages" aria-live="polite">
+    <p class="empty">No messages yet. Say something.</p>
+  </div>
+
+  <form id="composer" class="composer" autocomplete="off">
+    <input id="nick" class="nick" maxlength="23" placeholder="name" aria-label="Your name">
+    <input id="text" class="text" maxlength="279" placeholder="Message" aria-label="Message">
+    <button id="send" class="send" type="submit" aria-label="Send">↑</button>
+  </form>
+</main>
+
+<!-- ── Gallery ──────────────────────────────────────────── -->
+<main id="view-gallery" class="view">
+  <div class="uploadbar">
+    <label class="btn" for="file">Add photos</label>
+    <input id="file" type="file" accept="image/*" multiple hidden>
+    <span id="quota" class="quota"></span>
+  </div>
+  <div id="progress" class="progress" hidden><div id="progressBar"></div></div>
+  <div id="grid" class="grid">
+    <p class="empty">No photos yet.</p>
+  </div>
+</main>
+
+<!-- Full-size viewer -->
+<div id="viewer" class="viewer" hidden>
+  <button id="viewerClose" class="viewerClose" aria-label="Close">✕</button>
+  <img id="viewerImg" alt="">
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

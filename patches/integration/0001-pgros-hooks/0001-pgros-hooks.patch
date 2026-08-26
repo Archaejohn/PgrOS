@@ -1,0 +1,59 @@
+diff --git a/platformio.ini b/platformio.ini
+index 5f43d64d6..9369397b9 100644
+--- a/platformio.ini
++++ b/platformio.ini
+@@ -9,6 +9,9 @@ extra_configs =
+ 	variants/*/*/platformio.ini
+ 	variants/*/diy/*/platformio.ini
+ 	src/graphics/niche/InkHUD/PlatformioConfig.ini
++	; PgrOS overlay: defines [env:pgros]. It lives outside this tree so the
++	; vendored firmware stays a clean, unmodified upstream checkout.
++	../../pgros.ini
+ 
+ description = Meshtastic
+ 
+diff --git a/src/main.cpp b/src/main.cpp
+index 3f606706f..681bb927c 100644
+--- a/src/main.cpp
++++ b/src/main.cpp
+@@ -44,6 +44,9 @@
+ #include "detect/einkScan.h"
+ #include "graphics/Screen.h"
+ #include "main.h"
++#ifdef PGROS
++#include "core/Boot.h" // PgrOS overlay: pgros::earlyBoot() / pgros::begin()
++#endif
+ #include "memory/MemAudit.h"
+ #include "mesh/generated/meshtastic/config.pb.h"
+ #include "meshUtils.h"
+@@ -546,6 +549,14 @@ void setup()
+ #endif
+     initSPI();
+ 
++#ifdef PGROS
++    // PgrOS stage 0: bring up the panel and paint a splash while the backlight
++    // is still off, then ramp the backlight onto an already-drawn frame. Placed
++    // here because it is the earliest point at which SPI exists; everything
++    // below (fsInit, NodeDB, initLoRa) then runs behind a live display.
++    pgros::earlyBoot();
++#endif
++
+     OSThread::setup();
+ 
+     fsInit();
+@@ -1129,6 +1140,15 @@ void setup()
+         inputBroker->Init();
+ #endif
+ 
++#ifdef PGROS
++    // PgrOS stage 1: LVGL, the app tree, and the UI task on core 1. Deliberately
++    // after inputBroker->Init() so the keyboard and rotary encoder are already
++    // registered, and after setupModules() so MeshBridge can observe
++    // textMessageModule. The mesh stack keeps booting on the main task while the
++    // UI is already interactive.
++    pgros::begin();
++#endif
++
+ #ifdef MESHTASTIC_INCLUDE_NICHE_GRAPHICS
+     // After modules are setup, so we can observe modules
+     setupNicheGraphics();

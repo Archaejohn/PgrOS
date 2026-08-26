@@ -1,0 +1,109 @@
+diff --git a/src/input/kbI2cBase.cpp b/src/input/kbI2cBase.cpp
+index d4851c7f6..d693c16bf 100644
+--- a/src/input/kbI2cBase.cpp
++++ b/src/input/kbI2cBase.cpp
+@@ -207,7 +207,7 @@ int32_t KbI2cBase::runOnce()
+                 }
+ 
+                 if (e.inputEvent != INPUT_BROKER_NONE) {
+-                    this->notifyObservers(&e);
++                    this->notifyKey(e);
+                 }
+             }
+         }
+@@ -271,7 +271,7 @@ int32_t KbI2cBase::runOnce()
+             }
+             if (e.inputEvent != INPUT_BROKER_NONE) {
+                 LOG_DEBUG("MP121 Notifying: %i Char: %i", e.inputEvent, e.kbchar);
+-                this->notifyObservers(&e);
++                this->notifyKey(e);
+             }
+         }
+         break;
+@@ -377,7 +377,7 @@ int32_t KbI2cBase::runOnce()
+             }
+             if (e.inputEvent != INPUT_BROKER_NONE) {
+                 // LOG_DEBUG("TCA8418 Notifying: %i Char: %c", e.inputEvent, e.kbchar);
+-                this->notifyObservers(&e);
++                this->notifyKey(e);
+             }
+             TCAKeyboard->trigger();
+         }
+@@ -403,7 +403,7 @@ int32_t KbI2cBase::runOnce()
+             e.inputEvent = INPUT_BROKER_MATRIXKEY;
+             e.source = this->_originName;
+             e.kbchar = PrintDataBuf;
+-            this->notifyObservers(&e);
++            this->notifyKey(e);
+         }
+         break;
+     }
+@@ -557,7 +557,7 @@ int32_t KbI2cBase::runOnce()
+             }
+ 
+             if (e.inputEvent != INPUT_BROKER_NONE) {
+-                this->notifyObservers(&e);
++                this->notifyKey(e);
+             }
+         }
+         break;
+@@ -654,7 +654,7 @@ int32_t KbI2cBase::runOnce()
+         }
+         if (e.inputEvent != INPUT_BROKER_NONE) {
+             // LOG_DEBUG("STC8H companion-MCU keypad key event: 0x%02x", c);
+-            this->notifyObservers(&e);
++            this->notifyKey(e);
+         }
+ 
+         break;
+@@ -663,7 +663,34 @@ int32_t KbI2cBase::runOnce()
+     default:
+         LOG_WARN("Unknown kb_model 0x%02x", kb_model);
+     }
+-    return 300;
++    return pollInterval();
++}
++
++// Poll pacing.
++//
++// A flat 300 ms interval means a keystroke can wait most of a third of a second
++// before the controller is even read, and because the character is emitted on
++// key *release* that delay lands between every letter. It is very noticeable
++// while typing on the boards that have a full keyboard.
++//
++// Typing is bursty, so poll quickly for a short window after each key and fall
++// back to the idle rate when nothing is happening. A user who is not typing
++// still costs one I2C transaction every 300 ms, exactly as before.
++static constexpr int32_t kPollIdleMs = 300;
++static constexpr int32_t kPollActiveMs = 20;
++static constexpr uint32_t kActiveWindowMs = 750;
++
++void KbI2cBase::notifyKey(const InputEvent &e)
++{
++    lastKeyMs = millis();
++    this->notifyObservers(&e);
++}
++
++int32_t KbI2cBase::pollInterval() const
++{
++    if (lastKeyMs && (millis() - lastKeyMs) < kActiveWindowMs)
++        return kPollActiveMs;
++    return kPollIdleMs;
+ }
+ 
+ void KbI2cBase::toggleBacklight(bool on)
+diff --git a/src/input/kbI2cBase.h b/src/input/kbI2cBase.h
+index a2f2e3cc0..34ffd19e8 100644
+--- a/src/input/kbI2cBase.h
++++ b/src/input/kbI2cBase.h
+@@ -31,4 +31,9 @@ class KbI2cBase : public Observable<const InputEvent *>, public concurrency::OST
+     MPR121Keyboard MPRkeyboard;
+     std::unique_ptr<TCA8418KeyboardBase> TCAKeyboard;
+     bool is_sym = false;
++
++    // Adaptive poll pacing. See the comment above pollInterval() in the .cpp.
++    void notifyKey(const InputEvent &e);
++    int32_t pollInterval() const;
++    uint32_t lastKeyMs = 0;
+ };
+\ No newline at end of file
