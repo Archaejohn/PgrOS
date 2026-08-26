@@ -95,6 +95,25 @@ static void detectGalleryStore()
     LOG_INFO("PgrOS portal: gallery on internal flash");
 }
 
+// Make sure the web root exists even when the filesystem image was never
+// flashed.
+//
+// The assets normally arrive in the LittleFS image, but that image is a
+// whole-partition write and takes the Meshtastic config and the chat history
+// with it. Creating the directory here means the three files can be dropped in
+// afterwards -- over the Launcher WebUI, or any other file browser -- without
+// erasing anything. An empty directory costs nothing if they never are.
+static void ensureWebRoot()
+{
+    concurrency::LockGuard g(spiLock);
+    if (!FSCom.exists("/pgros"))
+        FSCom.mkdir("/pgros");
+    if (FSCom.exists(kWwwDir))
+        return;
+    if (FSCom.mkdir(kWwwDir))
+        LOG_INFO("PgrOS portal: created %s (upload index.html, app.js, style.css here)", kWwwDir);
+}
+
 // ---------------------------------------------------------------------------
 // Input hygiene
 //
@@ -527,6 +546,7 @@ static void handleStatic(HTTPRequest *req, HTTPResponse *res)
 bool Portal::begin()
 {
     detectGalleryStore();
+    ensureWebRoot();
     return true;
 }
 
