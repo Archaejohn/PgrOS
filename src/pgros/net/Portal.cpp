@@ -300,7 +300,10 @@ static void handleRoomPost(HTTPRequest *req, HTTPResponse *res)
 // GET /api/gallery
 static void handleGalleryList(HTTPRequest *req, HTTPResponse *res)
 {
-    GalleryItem items[64];
+    // Static, not stack: GalleryItem is ~104 bytes and 64 of them is 6.6 KB,
+    // which does not fit comfortably on any task here. Safe because the HTTP
+    // handlers are driven one at a time from Portal::loop().
+    static GalleryItem items[64];
     const size_t n = portal.galleryList(items, 64);
 
     std::string out = "{\"items\":[";
@@ -689,7 +692,10 @@ bool Portal::galleryDelete(const char *name)
 
 void Portal::galleryClear()
 {
-    GalleryItem items[64];
+    // Static, not stack: GalleryItem is ~104 bytes and 64 of them is 6.6 KB,
+    // which does not fit comfortably on any task here. Safe because the HTTP
+    // handlers are driven one at a time from Portal::loop().
+    static GalleryItem items[64];
     const size_t n = galleryList(items, 64);
     for (size_t i = 0; i < n; ++i)
         galleryDelete(items[i].name);

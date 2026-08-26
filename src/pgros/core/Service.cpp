@@ -2,6 +2,8 @@
 
 #include "core/Service.h"
 
+#include "core/Boot.h" // bootComplete()
+
 #include "configuration.h"
 
 #include "core/MeshBridge.h"
@@ -59,9 +61,21 @@ class ServiceThread : public concurrency::OSThread
   protected:
     int32_t runOnce() override
     {
+        // The first time this runs we are in loop(), which means setup() has
+        // returned and the whole mesh stack is up. That is the signal PgrOS uses
+        // to dismiss the boot overlay -- there is no callback from setup() and
+        // nothing else knows the moment boot actually finished.
+        if (!mAnnouncedBoot) {
+            mAnnouncedBoot = true;
+            bootComplete();
+        }
+
         service_.drain();
         return 20;
     }
+
+  private:
+    bool mAnnouncedBoot = false;
 };
 
 static ServiceThread *serviceThread = nullptr;
@@ -112,6 +126,20 @@ void Service::drain()
     }
 }
 
+// Scratch space for the two intents that need to look back through a thread.
+//
+// This is deliberately NOT on the stack. ChatMessage is ~320 bytes, so even a
+// modest window is measured in kilobytes, and execute() runs on the Arduino
+// loop task whose stack is 8 KB total -- shared with the LittleFS call chain
+// these very intents trigger. A 24-element local array here overflowed that
+// stack and corrupted the return address, which surfaced as a LoadProhibited
+// panic deep inside esp_flash_read() with a nonsense chip pointer.
+//
+// Safe as a single shared buffer because execute() is only ever called from
+// Service::drain(), which only ever runs on the main task.
+static constexpr size_t kScratchMessages = 8;
+static ChatMessage sScratch[kScratchMessages];
+
 void Service::execute(const Intent &in)
 {
     switch (in.type) {
@@ -132,13 +160,13 @@ void Service::execute(const Intent &in)
         // the record with this packet id.
         {
             ThreadId t = toThreadId(in.thread);
-            ChatMessage msgs[24];
-            size_t n = chatStore.readTail(t, msgs, 24);
+            // Scratch, not stack. See kScratchMessages above.
+            const size_t n = chatStore.readTail(t, sScratch, kScratchMessages);
             for (size_t i = 0; i < n; ++i) {
-                if (msgs[i].packetId == in.packetId) {
+                if (sScratch[i].packetId == in.packetId) {
                     OutgoingMessage out;
                     out.thread = t;
-                    out.text = msgs[i].text;
+                    out.text = sScratch[i].text;
                     out.wantAck = true;
                     SendResult r = mesh.send(out);
                     if (!r.accepted)
@@ -159,12 +187,12 @@ void Service::execute(const Intent &in)
         uint32_t receiptIds[MeshBridge::kMaxReceiptIds];
         size_t receiptCount = 0;
         if (t.direct && policy.get().sendReadReceipts) {
-            ChatMessage recent[24];
-            const size_t got = chatStore.readTail(t, recent, 24);
+            // Scratch, not stack. See kScratchMessages above.
+            const size_t got = chatStore.readTail(t, sScratch, kScratchMessages);
             // Walk newest-first so a burst longer than kMaxReceiptIds reports
             // the most recent ones; the older reads are implied by them.
             for (size_t i = got; i-- > 0 && receiptCount < MeshBridge::kMaxReceiptIds;) {
-                const ChatMessage &m = recent[i];
+                const ChatMessage &m = sScratch[i];
                 if (!(m.flags & kFlagOutbound) && (m.flags & kFlagUnread) && m.packetId)
                     receiptIds[receiptCount++] = m.packetId;
             }

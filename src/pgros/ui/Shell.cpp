@@ -167,8 +167,12 @@ bool Shell::begin()
 
     home();
 
-    BaseType_t ok = xTaskCreatePinnedToCore(&Shell::taskEntry, "pgros-ui", kTaskStackBytes / sizeof(StackType_t), this,
-                                            kTaskPriority, &sUiTask, kTaskCore);
+    // NOTE: ESP-IDF's xTaskCreatePinnedToCore() takes the stack depth in BYTES,
+    // unlike vanilla FreeRTOS where it is in words. Dividing by sizeof(StackType_t)
+    // here asked for a quarter of the intended stack, which is not enough for
+    // LVGL's recursive render plus a filesystem read underneath it.
+    BaseType_t ok = xTaskCreatePinnedToCore(&Shell::taskEntry, "pgros-ui", kTaskStackBytes, this, kTaskPriority,
+                                            &sUiTask, kTaskCore);
     if (ok != pdPASS) {
         LOG_ERROR("PgrOS: UI task failed to start");
         return false;

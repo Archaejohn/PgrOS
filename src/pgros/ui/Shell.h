@@ -119,9 +119,12 @@ class Shell
     uint16_t mLastFrameMs = 0;
     void *mTask = nullptr; // TaskHandle_t
 
-    // UI task configuration. LVGL needs a generous stack; rendering recurses
-    // through the widget tree.
-    static constexpr uint32_t kTaskStackBytes = 12 * 1024;
+    // UI task configuration. In BYTES -- ESP-IDF's xTaskCreatePinnedToCore takes
+    // bytes, not words. LVGL needs a generous stack because rendering recurses
+    // through the widget tree, and apps read the chat log from this task, which
+    // drags the LittleFS call chain onto it too. device-ui uses 16 KB for the
+    // same panel and the same reason.
+    static constexpr uint32_t kTaskStackBytes = 20 * 1024;
     static constexpr uint32_t kTaskPriority = 2; // below the radio, above idle
     static constexpr int kTaskCore = 1;          // core 0 runs the mesh stack
 };
