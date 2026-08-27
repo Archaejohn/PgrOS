@@ -66,6 +66,7 @@ void NetworkApp::onCreate(lv_obj_t *parent)
 
     buildModes(mRoot);
     buildScan(mRoot);
+    buildNetAction(mRoot);
     buildPassphrase(mRoot);
     buildHotspot(mRoot);
     buildConfirm(mRoot);
@@ -150,6 +151,68 @@ void NetworkApp::buildScan(lv_obj_t *parent)
     lv_label_set_text(mScanEmpty, "No networks found");
     lv_obj_center(mScanEmpty);
     lv_obj_add_flag(mScanEmpty, LV_OBJ_FLAG_HIDDEN);
+}
+
+// Join / Forget / Cancel for the network picked out of the scan list.
+//
+// Selecting a network used to join it immediately, which meant a saved network
+// with a wrong password could never be corrected from the device -- there was no
+// route to WifiManager::forget(), which had been written and left unreachable.
+void NetworkApp::buildNetAction(lv_obj_t *parent)
+{
+    mAction = lv_obj_create(parent);
+    lv_obj_remove_style_all(mAction);
+    lv_obj_set_size(mAction, metrics::screenW, metrics::contentH);
+    lv_obj_add_flag(mAction, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(mAction, LV_OBJ_FLAG_SCROLLABLE);
+
+    mActionTitle = lv_label_create(mAction);
+    lv_obj_set_style_text_font(mActionTitle, theme.fontBody(), 0);
+    lv_obj_set_style_text_color(mActionTitle, lv_color_hex(theme.colors().text), 0);
+    lv_label_set_long_mode(mActionTitle, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(mActionTitle, metrics::screenW - metrics::padL * 2);
+    lv_obj_align(mActionTitle, LV_ALIGN_TOP_LEFT, metrics::padL, 12);
+
+    for (uint8_t i = 0; i < kActionRows; ++i) {
+        mActionRow[i] = makeRow(mAction, (int16_t)(40 + i * 36), 32);
+
+        mActionLabel[i] = lv_label_create(mActionRow[i]);
+        lv_obj_set_style_text_font(mActionLabel[i], theme.fontBody(), 0);
+        lv_obj_set_style_text_color(mActionLabel[i], lv_color_hex(theme.colors().text), 0);
+        lv_obj_align(mActionLabel[i], LV_ALIGN_LEFT_MID, metrics::padM, 0);
+        lv_label_set_text(mActionLabel[i], "");
+    }
+}
+
+void NetworkApp::refreshNetAction()
+{
+    char title[64];
+    snprintf(title, sizeof(title), "%s%s", mPendingSsid, mActionSaved ? "  (saved)" : "");
+    lv_label_set_text(mActionTitle, title);
+
+    // Forget only appears when there is something to forget.
+    const char *labels[kActionRows];
+    uint8_t n = 0;
+    labels[n++] = mActionSaved ? "Join with saved password" : "Join";
+    if (mActionSaved)
+        labels[n++] = "Forget this network";
+    labels[n++] = "Cancel";
+    mActionCount = n;
+
+    for (uint8_t i = 0; i < kActionRows; ++i) {
+        if (i >= mActionCount) {
+            lv_obj_add_flag(mActionRow[i], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+        lv_obj_remove_flag(mActionRow[i], LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(mActionLabel[i], labels[i]);
+
+        // Forget is destructive, so it is the one row that carries a colour.
+        const bool destructive = mActionSaved && i == 1;
+        lv_obj_set_style_text_color(mActionLabel[i],
+                                    lv_color_hex(destructive ? theme.colors().error : theme.colors().text), 0);
+        markSelected(mActionRow[i], i == mSelected);
+    }
 }
 
 void NetworkApp::buildPassphrase(lv_obj_t *parent)
@@ -260,11 +323,22 @@ void NetworkApp::buildConfirm(lv_obj_t *parent)
 // Panes
 // ---------------------------------------------------------------------------
 
+// Leaving the action menu should put the cursor back on the network you were
+// looking at, not at the top of the list.
+void NetworkApp::returnToScan()
+{
+    showPane(Pane::Scan);
+    if (mScanSelected < mResultCount) {
+        mSelected = mScanSelected;
+        refreshScan();
+    }
+}
+
 void NetworkApp::showPane(Pane p)
 {
     mPane = p;
-    lv_obj_t *panes[] = {mModes, mScan, mPass, mHotspot, mConfirm};
-    for (uint8_t i = 0; i < 5; ++i) {
+    lv_obj_t *panes[] = {mModes, mScan, mAction, mPass, mHotspot, mConfirm};
+    for (uint8_t i = 0; i < 6; ++i) {
         if (!panes[i])
             continue;
         if ((uint8_t)p == i)
@@ -277,6 +351,9 @@ void NetworkApp::showPane(Pane p)
     switch (p) {
     case Pane::Modes:
         refreshModes();
+        break;
+    case Pane::NetAction:
+        refreshNetAction();
         break;
     case Pane::Scan:
         refreshScan();
@@ -417,6 +494,9 @@ void NetworkApp::moveSelection(int8_t delta)
     case Pane::Scan:
         count = mResultCount;
         break;
+    case Pane::NetAction:
+        count = mActionCount;
+        break;
     case Pane::Confirm:
         mConfirmChoice = mConfirmChoice ? 0 : 1;
         return;
@@ -432,10 +512,17 @@ void NetworkApp::moveSelection(int8_t delta)
                 // list is disorienting when you cannot see the whole thing
     mSelected = (uint8_t)next;
 
-    if (mPane == Pane::Modes)
+    switch (mPane) {
+    case Pane::Modes:
         refreshModes();
-    else
+        break;
+    case Pane::NetAction:
+        refreshNetAction();
+        break;
+    default:
         refreshScan();
+        break;
+    }
 }
 
 void NetworkApp::requestMode(uint8_t coexMode)
@@ -505,9 +592,40 @@ void NetworkApp::activate()
         const ScanResult &r = mResults[mSelected];
         strncpy(mPendingSsid, r.ssid, sizeof(mPendingSsid) - 1);
         mPendingSsid[sizeof(mPendingSsid) - 1] = '\0';
+        mActionSaved = r.saved;
+        mPendingOpen = (r.security == WifiSecurity::Open);
+        mScanSelected = mSelected; // showPane() zeroes mSelected; come back where we were
 
-        if (r.security == WifiSecurity::Open || r.saved) {
-            // Open, or we already hold credentials: join straight away.
+        // Always via the menu. Joining on selection is fine right up until the
+        // saved password is wrong, at which point there is no way to correct it
+        // from the device.
+        showPane(Pane::NetAction);
+        break;
+    }
+
+    case Pane::NetAction: {
+        // Row order is built in refreshNetAction(): Join, [Forget], Cancel.
+        const bool isForget = mActionSaved && mSelected == 1;
+        const bool isCancel = mSelected == (uint8_t)(mActionCount - 1);
+
+        if (isCancel) {
+            returnToScan();
+            break;
+        }
+
+        if (isForget) {
+            service_.wifiForget(mPendingSsid);
+            shell.toast("Network forgotten");
+            // The scan results are a snapshot, so drop the saved marker here
+            // rather than waiting for the user to rescan.
+            if (mScanSelected < mResultCount)
+                mResults[mScanSelected].saved = false;
+            returnToScan();
+            break;
+        }
+
+        // Join. Saved or open networks need no passphrase; anything else does.
+        if (mPendingOpen || mActionSaved) {
             service_.wifiJoin(mPendingSsid, "");
             shell.showBusy("Joining");
             showPane(Pane::Modes);
@@ -608,6 +726,10 @@ bool NetworkApp::onKey(uint32_t k)
 
     case key::Back:
     case key::Cancel:
+        if (mPane == Pane::NetAction) {
+            returnToScan();
+            return true;
+        }
         if (mPane != Pane::Modes) {
             showPane(Pane::Modes);
             return true;

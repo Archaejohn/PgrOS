@@ -39,10 +39,16 @@ class NetworkApp : public App
     // Which pane is showing. A single app with panes rather than four
     // registered apps: they share all their state and navigating between them
     // should not touch the shell's nav stack.
-    enum class Pane : uint8_t { Modes, Scan, Passphrase, Hotspot, Confirm };
+    // NetAction is the little Join / Forget / Cancel menu that appears when a
+    // network is picked from the scan list. Selecting a network used to join it
+    // outright, which left no way to drop saved credentials.
+    enum class Pane : uint8_t { Modes, Scan, NetAction, Passphrase, Hotspot, Confirm };
 
     void buildModes(lv_obj_t *parent);
     void buildScan(lv_obj_t *parent);
+    void buildNetAction(lv_obj_t *parent);
+    void refreshNetAction();
+    void returnToScan();
     void buildPassphrase(lv_obj_t *parent);
     void buildHotspot(lv_obj_t *parent);
     void buildConfirm(lv_obj_t *parent);
@@ -80,6 +86,18 @@ class NetworkApp : public App
     lv_obj_t *mScanList = nullptr;
     lv_obj_t *mScanSpinner = nullptr;
     lv_obj_t *mScanEmpty = nullptr;
+
+    // Join / Forget / Cancel. Forget is hidden for a network we hold no
+    // credentials for, so the menu never offers a no-op.
+    lv_obj_t *mAction = nullptr;
+    lv_obj_t *mActionTitle = nullptr;
+    static constexpr uint8_t kActionRows = 3;
+    lv_obj_t *mActionRow[kActionRows] = {nullptr};
+    lv_obj_t *mActionLabel[kActionRows] = {nullptr};
+    uint8_t mActionCount = 0;
+    bool mActionSaved = false;
+    bool mPendingOpen = false;
+    uint8_t mScanSelected = 0;
     static constexpr uint8_t kScanRows = 12;
     lv_obj_t *mScanRow[kScanRows] = {nullptr};
     lv_obj_t *mScanSsid[kScanRows] = {nullptr};
