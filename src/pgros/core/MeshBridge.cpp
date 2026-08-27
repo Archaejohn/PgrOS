@@ -33,6 +33,11 @@
 #include "NodeStatus.h"
 #include "Observer.h"
 #include "configuration.h"
+
+#include "BluetoothStatus.h"
+#include "GPSStatus.h"
+#include "PowerStatus.h"
+#include "hal/Silence.h"
 #include "gps/RTC.h"
 #include "mesh/Channels.h"
 #include "mesh/MeshModule.h"
@@ -430,6 +435,142 @@ void MeshBridge::sendReadReceipt(const ThreadId &thread, const uint32_t *packetI
     LOG_DEBUG("PgrOS: sent read receipt for %u message(s) to 0x%08x", (unsigned)count, (unsigned)thread.peer);
 }
 
+// ---------------------------------------------------------------------------
+// Bluetooth pairing
+//
+// Meshtastic's NimbleBluetoothSecurityCallback::onPassKeyNotify() publishes the
+// six-digit passkey two ways: it draws it on the stock OLED, and it pushes a
+// BluetoothStatus onto an observable. The OLED half is dead here -- PgrOS
+// compiles the stock screen out -- so this observer is the only thing standing
+// between the user and an unpairable device.
+//
+// Runs on whichever task NimBLE notifies from, so it does no UI work itself; it
+// posts an event and the shell raises the modal on the UI task.
+// ---------------------------------------------------------------------------
+class PgrosBluetoothObserver : public Observer<const meshtastic::Status *>
+{
+  protected:
+    // onNewStatus is inherited from Status, so it is typed on the base. We only
+    // ever attach it to bluetoothStatus, so every notification is a
+    // BluetoothStatus and the downcast is safe.
+    int onNotify(const meshtastic::Status *base) override
+    {
+        if (!base)
+            return 0;
+
+        const auto *status = static_cast<const meshtastic::BluetoothStatus *>(base);
+
+        using State = meshtastic::BluetoothStatus::ConnectionState;
+        switch (status->getConnectionState()) {
+
+        case State::PAIRING: {
+            // Carried as a string so leading zeros survive; the modal formats it
+            // back into two groups of three.
+            const uint32_t passkey = (uint32_t)strtoul(status->getPasskey().c_str(), nullptr, 10);
+            LOG_INFO("PgrOS: BLE pairing, passkey %06u", (unsigned)passkey);
+            postBlePairing(passkey);
+            break;
+        }
+
+        case State::CONNECTED: {
+            // Pairing finished. Dismiss the modal and note the connection.
+            Event ev{};
+            ev.type = EventType::BlePairingEnd;
+            ev.atMs = millis();
+            ev.ble.connected = 1;
+            events.post(ev);
+
+            ev.type = EventType::BleConnection;
+            events.post(ev);
+            break;
+        }
+
+        case State::DISCONNECTED:
+        default: {
+            Event ev{};
+            ev.type = EventType::BlePairingEnd;
+            ev.atMs = millis();
+            ev.ble.connected = 0;
+            events.post(ev);
+
+            ev.type = EventType::BleConnection;
+            events.post(ev);
+            break;
+        }
+        }
+
+        return 0; // let any other observer see it too
+    }
+};
+
+static PgrosBluetoothObserver *gBluetoothObserver = nullptr;
+
+// ---------------------------------------------------------------------------
+// GPS and power
+//
+// Both are Observable<const Status *> on the Meshtastic side and both are
+// downcast the same way as the Bluetooth one: we only ever attach each observer
+// to its own status object.
+//
+// Nothing else produced EventType::GpsFix or EventType::PowerChanged, so the
+// location screen showed a permanent "searching" and no satellites, and the
+// status bar had no battery, even while the GPS was reporting a clean twelve
+// satellite lock to the log.
+// ---------------------------------------------------------------------------
+class PgrosGpsObserver : public Observer<const meshtastic::Status *>
+{
+  protected:
+    int onNotify(const meshtastic::Status *base) override
+    {
+        const auto *gps = static_cast<const meshtastic::GPSStatus *>(base);
+        if (!gps)
+            return 0;
+
+        Event ev{};
+        ev.type = EventType::GpsFix;
+        ev.atMs = millis();
+        ev.gps.latI = gps->getLatitude();
+        ev.gps.lonI = gps->getLongitude();
+        ev.gps.altM = gps->getAltitude();
+
+        // Satellite count is meaningful with or without a fix -- "6 satellites,
+        // no fix yet" and "0 satellites" mean very different things to someone
+        // deciding whether to walk into the open.
+        const uint32_t sats = gps->getNumSatellites();
+        ev.gps.sats = (uint8_t)(sats > 255 ? 255 : sats);
+        ev.gps.fixValid = gps->getHasLock() ? 1 : 0;
+
+        events.post(ev);
+        return 0;
+    }
+};
+
+class PgrosPowerObserver : public Observer<const meshtastic::Status *>
+{
+  protected:
+    int onNotify(const meshtastic::Status *base) override
+    {
+        const auto *pwr = static_cast<const meshtastic::PowerStatus *>(base);
+        if (!pwr)
+            return 0;
+
+        Event ev{};
+        ev.type = EventType::PowerChanged;
+        ev.atMs = millis();
+        ev.power.percent = pwr->getBatteryChargePercent();
+        const int mv = pwr->getBatteryVoltageMv();
+        ev.power.millivolts = (uint16_t)(mv < 0 ? 0 : (mv > 65535 ? 65535 : mv));
+        ev.power.charging = pwr->getIsCharging() ? 1 : 0;
+        ev.power.usbPowered = pwr->getHasUSB() ? 1 : 0;
+
+        events.post(ev);
+        return 0;
+    }
+};
+
+static PgrosGpsObserver *gGpsObserver = nullptr;
+static PgrosPowerObserver *gPowerObserver = nullptr;
+
 bool MeshBridge::begin()
 {
     if (gStarted)
@@ -457,6 +598,25 @@ bool MeshBridge::begin()
 
     gNodeObserver = new PgrosNodeObserver();
     gNodeObserver->observe(&nodeDB->newStatus);
+
+    // Without this the BLE passkey is never shown and the device cannot be
+    // paired: the stock screen that used to draw it is compiled out.
+    if (bluetoothStatus) {
+        gBluetoothObserver = new PgrosBluetoothObserver();
+        gBluetoothObserver->observe(&bluetoothStatus->onNewStatus);
+    } else {
+        LOG_WARN("MeshBridge: bluetoothStatus is null, pairing code will not be shown");
+    }
+
+    if (gpsStatus) {
+        gGpsObserver = new PgrosGpsObserver();
+        gGpsObserver->observe(&gpsStatus->onNewStatus);
+    }
+
+    if (powerStatus) {
+        gPowerObserver = new PgrosPowerObserver();
+        gPowerObserver->observe(&powerStatus->onNewStatus);
+    }
 
     gStarted = true;
     refreshNodes();
@@ -559,6 +719,12 @@ void MeshBridge::onTextMessage(const void *packet)
     // The UI task learns about this only from the event; it must never be handed
     // the packet, which is about to be recycled into the pool.
     postMsgEvent(EventType::MessageReceived, thread, m.packetId, m.from, m.status, outbound);
+
+    // Alert the user. Silent unless they turned something on -- both settings
+    // default to Off -- but without this call the Settings entries for message
+    // and direct-message alerts do nothing at all.
+    if (!outbound)
+        Silence::notifyMessage(thread.direct);
 }
 
 void MeshBridge::onRouting(uint32_t packetId, bool ok, uint8_t errorReason)

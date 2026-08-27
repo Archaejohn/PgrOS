@@ -73,6 +73,16 @@ class ServiceThread : public concurrency::OSThread
 
         service_.drain();
 
+        // Housekeeping. ChatStore::compactIfNeeded() only does work once a
+        // thread exceeds its threshold, but nothing was ever calling it, so logs
+        // grew without bound. Ten minutes is far more often than a pager can
+        // fill 192 KB of one conversation.
+        const uint32_t now = millis();
+        if (now - mLastCompactMs > kCompactIntervalMs) {
+            mLastCompactMs = now;
+            chatStore.compactIfNeeded();
+        }
+
         // Pump the web server.
         //
         // esp32_https_server is synchronous: it accepts connections and services
@@ -117,7 +127,10 @@ class ServiceThread : public concurrency::OSThread
         coex.request(want, CoexReason::BootDefault);
     }
 
+    static constexpr uint32_t kCompactIntervalMs = 10 * 60 * 1000;
+
     bool mAnnouncedBoot = false;
+    uint32_t mLastCompactMs = 0;
 };
 
 static ServiceThread *serviceThread = nullptr;
