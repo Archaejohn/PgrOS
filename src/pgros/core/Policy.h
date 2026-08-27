@@ -28,7 +28,7 @@ enum class ThemeMode : uint8_t { Dark = 0, Light, Auto };
 // a single versioned blob.
 struct Policy {
     // --- version ---------------------------------------------------------
-    uint16_t version = 1;
+    uint16_t version = 2;
 
     // --- sound and haptics: everything off by default --------------------
     bool bootChime = false;      // never make a noise on power-up
@@ -45,6 +45,11 @@ struct Policy {
     uint16_t screenTimeoutS = 60;
     uint16_t sleepTimeoutS = 300; // 0 disables deep sleep
     ThemeMode theme = ThemeMode::Dark;
+
+    // Time zone. Auto guesses from the GPS fix; setting it by hand turns that
+    // off. See core/TimeZone.h for what the guess can and cannot do.
+    bool tzAuto = true;
+    uint8_t tzIndex = 0;
     bool showClockOnLock = true;
 
     // --- messaging -------------------------------------------------------

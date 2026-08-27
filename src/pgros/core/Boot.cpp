@@ -9,6 +9,7 @@
 #include "core/Panic.h"
 #include "core/Policy.h"
 #include "core/Service.h"
+#include "core/TimeZone.h"
 #include "hal/Display.h"
 #include "hal/Keyboard.h"
 #include "hal/Silence.h"
@@ -86,6 +87,7 @@ void begin()
 
     // Preferences. Defaults are silent; see core/Policy.h.
     policy.begin();
+    timezone_::begin();
     Silence::applyPolicy();
 
     postBootStage(1, 20);

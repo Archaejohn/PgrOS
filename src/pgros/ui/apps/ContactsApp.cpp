@@ -459,6 +459,17 @@ void ContactsApp::openSelected()
 
 bool ContactsApp::onKey(uint32_t k)
 {
+    // Discovery. Broadcasts our NodeInfo with wantReplies set, which asks every
+    // node in earshot to answer with its own. The replies come back as ordinary
+    // NodeInfo packets, so this list refreshes itself through NodeUpdated --
+    // there is no separate result set to collect, and nodes that answer float to
+    // the top because the list is sorted by last-heard.
+    if (k == 'd' || k == 'D') {
+        service_.discover();
+        shell.toast("Asking nearby nodes to check in");
+        return true;
+    }
+
     switch (k) {
     case key::Up:
     case key::RotateCcw:

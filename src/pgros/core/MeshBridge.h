@@ -177,6 +177,24 @@ class MeshBridge
     // Current text, for the two name fields. Always NUL-terminates.
     void nodeConfigText(NodeField f, char *out, size_t outLen) const;
 
+    // --- discovery --------------------------------------------------------
+    //
+    // Broadcasts our NodeInfo with wantReplies set, which asks everyone in
+    // earshot to identify themselves. Replies arrive as ordinary NodeInfo
+    // packets, so the contact list refreshes itself through the usual
+    // NodeUpdated path -- there is no separate result set to collect.
+    //
+    // MESH TASK ONLY.
+    bool startDiscovery();
+
+    // Milliseconds left in the current discovery window, 0 when idle. Safe from
+    // any task: it is one integer read.
+    uint32_t discoveryRemainingMs() const;
+
+    // How long to keep saying "listening". Replies trickle in over several
+    // seconds on a busy mesh because everyone staggers their transmit.
+    static constexpr uint32_t kDiscoveryWindowMs = 30000;
+
     // --- read receipts ----------------------------------------------------
     //
     // PgrOS-private, sent on PortNum PRIVATE_APP so any node that does not speak
@@ -202,6 +220,7 @@ class MeshBridge
     // Called when a routing ack/nak arrives for one of our packets.
     void onRouting(uint32_t packetId, bool ok, uint8_t errorReason);
 
+    uint32_t mDiscoveryUntilMs = 0;
     uint32_t mRxCount = 0;
     uint32_t mTxCount = 0;
 

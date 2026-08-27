@@ -305,6 +305,11 @@ void Service::execute(const Intent &in)
         break;
     }
 
+    case IntentType::Discover:
+        if (!mesh.startDiscovery())
+            postNotification("Discovery unavailable", 1);
+        break;
+
     case IntentType::SavePolicy:
         policy.save();
         break;
@@ -433,6 +438,13 @@ bool Service::applyNodeConfig(uint8_t field, int32_t value, const char *text)
     } else {
         in.node.text[0] = 0;
     }
+    return post(in);
+}
+
+bool Service::discover()
+{
+    Intent in;
+    in.type = IntentType::Discover;
     return post(in);
 }
 

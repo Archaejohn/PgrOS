@@ -37,6 +37,7 @@
 #include "BluetoothStatus.h"
 #include "GPSStatus.h"
 #include "PowerStatus.h"
+#include "core/TimeZone.h"
 #include "hal/Silence.h"
 #include "gps/RTC.h"
 #include "mesh/Channels.h"
@@ -46,6 +47,7 @@
 #include "mesh/NodeDB.h"
 #include "mesh/Router.h"
 #include "mesh/mesh-pb-constants.h"
+#include "modules/NodeInfoModule.h"
 #include "modules/TextMessageModule.h"
 
 #include <Arduino.h>
@@ -540,6 +542,11 @@ class PgrosGpsObserver : public Observer<const meshtastic::Status *>
         ev.gps.sats = (uint8_t)(sats > 255 ? 255 : sats);
         ev.gps.fixValid = gps->getHasLock() ? 1 : 0;
 
+        // Let the timezone guesser see the fix. No-op unless auto mode is on and
+        // the nearest zone actually changed.
+        if (ev.gps.fixValid)
+            timezone_::onGpsFix(ev.gps.latI, ev.gps.lonI);
+
         events.post(ev);
         return 0;
     }
@@ -686,6 +693,28 @@ bool MeshBridge::applyNodeConfig(NodeField f, int32_t value, const char *text)
     }
 
     return needsReboot;
+}
+
+bool MeshBridge::startDiscovery()
+{
+    if (!nodeInfoModule) {
+        LOG_WARN("PgrOS: no nodeInfoModule, cannot discover");
+        return false;
+    }
+
+    // wantReplies is the whole mechanism: every node that hears this answers
+    // with its own NodeInfo, which updates NodeDB and refreshes the contact
+    // list through the ordinary NodeUpdated path.
+    nodeInfoModule->sendOurNodeInfo(NODENUM_BROADCAST, true);
+    mDiscoveryUntilMs = millis() + kDiscoveryWindowMs;
+    LOG_INFO("PgrOS: node discovery broadcast, listening %us", (unsigned)(kDiscoveryWindowMs / 1000));
+    return true;
+}
+
+uint32_t MeshBridge::discoveryRemainingMs() const
+{
+    const uint32_t now = millis();
+    return (mDiscoveryUntilMs > now) ? (mDiscoveryUntilMs - now) : 0;
 }
 
 int32_t MeshBridge::nodeConfigValue(NodeField f) const

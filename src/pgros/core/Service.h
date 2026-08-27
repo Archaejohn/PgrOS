@@ -42,6 +42,7 @@ enum class IntentType : uint8_t {
     PortalStart,
     PortalStop,
     ApplyNodeConfig, // node.* -- one Meshtastic node setting
+    Discover,        // ask nearby nodes to identify themselves
     SavePolicy,    // flush the debounced policy to flash
     CompactStore,  // housekeeping; runs off the UI task
     Reboot,
@@ -108,6 +109,7 @@ class Service
     bool portalStart();
     bool portalStop();
     bool applyNodeConfig(uint8_t field, int32_t value, const char *text);
+    bool discover();
     bool savePolicy();
     bool reboot();
 

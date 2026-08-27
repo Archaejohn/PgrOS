@@ -13,6 +13,7 @@
 #include "hal/Silence.h"
 #include "ui/Shell.h"
 #include "ui/Theme.h"
+#include "core/TimeZone.h"
 #include "ui/apps/MeshSettingsTable.h"
 
 #include <lvgl.h>
@@ -69,6 +70,8 @@ enum class Id : uint8_t {
     ScreenTimeout,
     SleepTimeout,
     ThemeMode_,
+    TzAuto,
+    TzZone,
     ShortNames,
     RelativeTime,
     ReadReceipts,
@@ -115,6 +118,8 @@ static const RowDesc kTable[] = {
     {Kind::Choice, Id::ScreenTimeout, "Screen timeout", 0, 0, 0},
     {Kind::Choice, Id::SleepTimeout, "Sleep after", 0, 0, 0},
     {Kind::Choice, Id::ThemeMode_, "Theme", 0, 0, 0},
+    {Kind::Toggle, Id::TzAuto, "Time zone from GPS", 0, 0, 0},
+    {Kind::Choice, Id::TzZone, "Time zone", 0, 0, 0},
 
     {Kind::Section, Id::None, "Messaging", 0, 0, 0},
     {Kind::Toggle, Id::ShortNames, "Show short names", 0, 0, 0},
@@ -401,6 +406,13 @@ void SettingsApp::refreshRow(uint8_t i)
     case Id::ThemeMode_:
         lv_label_set_text(mRows[i].value, kThemeNames[(uint8_t)p.theme % 3]);
         break;
+    case Id::TzAuto:
+        lv_label_set_text(mRows[i].value, timezone_::isAuto() ? "Auto" : "Manual");
+        break;
+    case Id::TzZone:
+        lv_label_set_text(mRows[i].value, timezone_::currentLabel());
+        break;
+
     case Id::ShortNames:
         lv_label_set_text(mRows[i].value, p.showNodeShortNames ? "Short" : "Full");
         break;
@@ -629,6 +641,28 @@ bool SettingsApp::adjust(uint8_t i, int8_t dir)
         p.theme = (ThemeMode)next;
         theme.setDark(p.theme != ThemeMode::Light);
         break;
+    }
+
+
+    case Id::TzAuto:
+        // Turning auto back on re-guesses at the next fix; turning it off
+        // pins whatever is showing now.
+        if (timezone_::isAuto())
+            timezone_::setManual(timezone_::currentIndex());
+        else
+            timezone_::setAuto();
+        refreshRow(i);
+        return true;
+
+    case Id::TzZone: {
+        // Choosing a zone by hand is an explicit decision, so it also
+        // switches auto off -- otherwise the next fix would undo it.
+        int next = (int)timezone_::currentIndex() + (dir > 0 ? 1 : -1);
+        if (next < 0) next = timezone_::kZoneCount - 1;
+        if (next >= (int)timezone_::kZoneCount) next = 0;
+        timezone_::setManual((uint8_t)next);
+        refreshRow(i);
+        return true;
     }
 
     case Id::ShortNames:
