@@ -94,7 +94,6 @@ class NetworkApp : public App
     char mPendingSsid[kMaxSsidLen] = {0};
     char mPassBuf[kMaxPassphrase] = {0};
     uint8_t mPassLen = 0;
-    bool mPassReveal = false;
 
     // Hotspot pane.
     lv_obj_t *mApSsid = nullptr;

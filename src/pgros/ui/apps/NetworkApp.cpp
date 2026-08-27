@@ -180,7 +180,7 @@ void NetworkApp::buildPassphrase(lv_obj_t *parent)
     mPassHint = lv_label_create(mPass);
     lv_obj_set_style_text_font(mPassHint, theme.fontSmall(), 0);
     lv_obj_set_style_text_color(mPassHint, lv_color_hex(theme.colors().textFaint), 0);
-    lv_label_set_text(mPassHint, "Enter to join   Tab to hide   Back to cancel");
+    lv_label_set_text(mPassHint, "Enter to join   Back to cancel");
     lv_obj_align(mPassHint, LV_ALIGN_BOTTOM_LEFT, metrics::padL, -6);
 }
 
@@ -372,33 +372,19 @@ void NetworkApp::refreshPassphrase()
     snprintf(buf, sizeof(buf), "Password for %s", mPendingSsid);
     lv_label_set_text(mPassSsid, buf);
 
-    // VISIBLE by default, which is the opposite of the usual convention and is
-    // the right call here.
+    // Always shown in clear. No masking, no reveal toggle.
     //
-    // A WPA key is long, case-sensitive and full of digits and punctuation --
-    // exactly the characters this keyboard reaches through a latched sym/shift
-    // that expires on a timer with no on-screen indicator. Masking it means a
-    // failed join tells you nothing about whether you mistyped or the modifier
-    // lapsed. The threat model does not justify it either: this is a handheld
-    // being read by the person holding it, not a login box in an office.
-    //
-    // Tab hides it for the times someone is looking over your shoulder.
-    if (!mPassReveal) {
-        lv_label_set_text(mPassField, mPassBuf);
-    } else {
-        char mask[kMaxPassphrase];
-        uint8_t i = 0;
-        for (; i < mPassLen && i < sizeof(mask) - 1; ++i)
-            mask[i] = '*';
-        mask[i] = '\0';
-        lv_label_set_text(mPassField, mask);
-    }
+    // Obscuring an entry field earns its keep on a shared screen someone else
+    // can see. This is a 480x222 panel in one person's hand, and the cost is
+    // real: a WPA key is long, case-sensitive and full of digits and
+    // punctuation, so hiding it means a failed join tells you nothing about
+    // whether you typed it correctly.
+    lv_label_set_text(mPassField, mPassBuf);
 
-    // Character count, so a silently-dropped keystroke is visible immediately.
+    // Character count, so a dropped keystroke is visible immediately.
     if (mPassHint) {
         char hint[72];
-        snprintf(hint, sizeof(hint), "%u chars   Enter to join   Tab to %s   Back to cancel", (unsigned)mPassLen,
-                 mPassReveal ? "show" : "hide");
+        snprintf(hint, sizeof(hint), "%u chars   Enter to join   Back to cancel", (unsigned)mPassLen);
         lv_label_set_text(mPassHint, hint);
     }
 }
@@ -528,7 +514,6 @@ void NetworkApp::activate()
         } else {
             mPassLen = 0;
             mPassBuf[0] = '\0';
-            mPassReveal = false;
             showPane(Pane::Passphrase);
         }
         break;
@@ -576,11 +561,6 @@ bool NetworkApp::onKey(uint32_t k)
                 mPassBuf[--mPassLen] = '\0';
                 refreshPassphrase();
             }
-            return true;
-        }
-        if (k == key::Tab) {
-            mPassReveal = !mPassReveal;
-            refreshPassphrase();
             return true;
         }
         if (k == key::Enter || k == key::Select) {

@@ -152,7 +152,9 @@ See `0001-tlora-pager-keyboard.patch` in this directory. It is contained entirel
 4. **Index the tap map by an explicit modifier index** (sym > shift > base) instead of
    `modifierFlag % 3`, fixing the shift+sym case.
 5. **Clear modifier state on the `BL_TOGGLE` path.**
-6. **Remove the dead `char_idx` / `tap_interval` multi-tap machinery**, which never ran. The
+6. **Remove the dead `char_idx` / `tap_interval` multi-tap machinery**, which never ran, and
+   rename `_TCA8418_MULTI_TAP_THRESHOLD` to `_TCA8418_MODIFIER_TIMEOUT` since with multi-tap
+   gone it governs only the shift/sym latch. Its value is unchanged. The
    pager has a full QWERTY matrix; its tap map is modifier-based, not multi-tap. If multi-tap
    is wanted later it should be reintroduced deliberately and actually read.
 

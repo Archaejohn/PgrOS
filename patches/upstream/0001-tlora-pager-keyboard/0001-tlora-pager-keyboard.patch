@@ -1,23 +1,22 @@
 diff --git a/src/input/TLoraPagerKeyboard.cpp b/src/input/TLoraPagerKeyboard.cpp
-index 3b7e45d18..2fccb68d8 100644
+index 3b7e45d18..10e07c467 100644
 --- a/src/input/TLoraPagerKeyboard.cpp
 +++ b/src/input/TLoraPagerKeyboard.cpp
-@@ -19,7 +19,13 @@
+@@ -19,7 +19,12 @@
  #define _TCA8418_ROWS 4
  #define _TCA8418_NUM_KEYS 31
  
 -#define _TCA8418_MULTI_TAP_THRESHOLD 1500
-+// How long a latched shift/sym stays armed. This used to double as the
-+// multi-tap window at 1500 ms, but multi-tap was dead code (see the writeup), so
-+// it now governs only the modifier latch -- and 1.5 s is far too short for that.
-+// Pressing sym and then hunting for the right key on a 31-key thumb keyboard
-+// routinely takes longer, and the latch expires silently: you press sym, aim for
-+// "1", and get "q". There is no on-screen shift indicator to warn you either.
-+#define _TCA8418_MODIFIER_TIMEOUT 4000
++// How long a latched shift/sym stays armed if it is never used. The modifier is
++// normally consumed by the very next keypress (see released()), so this only
++// governs an abandoned modifier. The constant used to double as the
++// multi-tap window, but multi-tap was dead code and this patch removes it, so the
++// name now matches what it actually does. Value unchanged from upstream.
++#define _TCA8418_MODIFIER_TIMEOUT 1500
  
  using Key = TCA8418KeyboardBase::TCA8418Key;
  
-@@ -28,45 +34,46 @@ constexpr uint8_t modifierRightShift = 0b0001;
+@@ -28,45 +33,46 @@ constexpr uint8_t modifierRightShift = 0b0001;
  constexpr uint8_t modifierSymKey = 21 - 1;
  constexpr uint8_t modifierSym = 0b0010;
  
@@ -99,7 +98,7 @@ index 3b7e45d18..2fccb68d8 100644
  {
  #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
      ledcAttach(KB_BL_PIN, LEDC_BACKLIGHT_FREQ, LEDC_BACKLIGHT_BIT_WIDTH);
-@@ -85,19 +92,72 @@ void TLoraPagerKeyboard::reset(void)
+@@ -85,19 +91,72 @@ void TLoraPagerKeyboard::reset(void)
      setBacklight(false);
  }
  
@@ -176,7 +175,7 @@ index 3b7e45d18..2fccb68d8 100644
              state = Idle;
          }
      }
-@@ -125,40 +185,25 @@ void TLoraPagerKeyboard::pressed(uint8_t key)
+@@ -125,40 +184,25 @@ void TLoraPagerKeyboard::pressed(uint8_t key)
          hapticFeedback();
      }
  
@@ -221,7 +220,7 @@ index 3b7e45d18..2fccb68d8 100644
      last_key = next_key;
      last_tap = now;
  }
-@@ -169,22 +214,32 @@ void TLoraPagerKeyboard::released()
+@@ -169,22 +213,32 @@ void TLoraPagerKeyboard::released()
          return;
      }
  
@@ -261,7 +260,7 @@ index 3b7e45d18..2fccb68d8 100644
          modifierFlag = 0;
  }
  
-@@ -228,4 +283,4 @@ bool TLoraPagerKeyboard::isModifierKey(uint8_t key)
+@@ -228,4 +282,4 @@ bool TLoraPagerKeyboard::isModifierKey(uint8_t key)
      return (key == modifierRightShiftKey || key == modifierSymKey);
  }
  
