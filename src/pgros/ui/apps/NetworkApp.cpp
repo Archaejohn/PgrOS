@@ -180,7 +180,7 @@ void NetworkApp::buildPassphrase(lv_obj_t *parent)
     mPassHint = lv_label_create(mPass);
     lv_obj_set_style_text_font(mPassHint, theme.fontSmall(), 0);
     lv_obj_set_style_text_color(mPassHint, lv_color_hex(theme.colors().textFaint), 0);
-    lv_label_set_text(mPassHint, "Enter to join   Tab to reveal   Back to cancel");
+    lv_label_set_text(mPassHint, "Enter to join   Tab to hide   Back to cancel");
     lv_obj_align(mPassHint, LV_ALIGN_BOTTOM_LEFT, metrics::padL, -6);
 }
 
@@ -372,9 +372,18 @@ void NetworkApp::refreshPassphrase()
     snprintf(buf, sizeof(buf), "Password for %s", mPendingSsid);
     lv_label_set_text(mPassSsid, buf);
 
-    // Masked by default. Typing a WPA key on a 31-key thumb keyboard goes wrong
-    // often enough that reveal is worth having.
-    if (mPassReveal) {
+    // VISIBLE by default, which is the opposite of the usual convention and is
+    // the right call here.
+    //
+    // A WPA key is long, case-sensitive and full of digits and punctuation --
+    // exactly the characters this keyboard reaches through a latched sym/shift
+    // that expires on a timer with no on-screen indicator. Masking it means a
+    // failed join tells you nothing about whether you mistyped or the modifier
+    // lapsed. The threat model does not justify it either: this is a handheld
+    // being read by the person holding it, not a login box in an office.
+    //
+    // Tab hides it for the times someone is looking over your shoulder.
+    if (!mPassReveal) {
         lv_label_set_text(mPassField, mPassBuf);
     } else {
         char mask[kMaxPassphrase];
@@ -383,6 +392,14 @@ void NetworkApp::refreshPassphrase()
             mask[i] = '*';
         mask[i] = '\0';
         lv_label_set_text(mPassField, mask);
+    }
+
+    // Character count, so a silently-dropped keystroke is visible immediately.
+    if (mPassHint) {
+        char hint[72];
+        snprintf(hint, sizeof(hint), "%u chars   Enter to join   Tab to %s   Back to cancel", (unsigned)mPassLen,
+                 mPassReveal ? "show" : "hide");
+        lv_label_set_text(mPassHint, hint);
     }
 }
 
