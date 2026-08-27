@@ -51,8 +51,22 @@
     <a class="btn" id="trackDl" href="/track.gpx" download>Download GPX</a>
     <button class="btn ghost" id="trackClear" type="button">Clear</button>
   </div>
+  <div id="mapWrap" class="mapwrap">
+    <div id="map"></div>
+    <div id="mapLegend" class="legend">
+      <span><i style="background:#e0524a"></i>none</span>
+      <span><i style="background:#e08b3c"></i>weak</span>
+      <span><i style="background:#d8c53c"></i>ok</span>
+      <span><i style="background:#8bc34a"></i>good</span>
+      <span><i style="background:#3ec46d"></i>strong</span>
+    </div>
+  </div>
+  <p id="mapNote" class="note"></p>
+
   <p class="note">Each point carries latitude, longitude and elevation, plus how much
-  mesh was audible there &mdash; so the track shows where coverage ran out.</p>
+  mesh was audible there &mdash; so the track shows where coverage ran out. The map
+  needs internet on <em>this</em> device, so it works when the pager is joined to a
+  WiFi network rather than serving its own hotspot. The GPX download always works.</p>
 </main>
 
 <!-- Full-size viewer -->

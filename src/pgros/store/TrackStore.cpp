@@ -375,6 +375,74 @@ bool TrackStore::exportGpx(EmitFn emit, void *ctx)
     return ok;
 }
 
+// ---------------------------------------------------------------------------
+// JSON, for the portal map
+//
+// Point order is [lat, lon, ele, bars, rssi, direct]. Arrays rather than objects
+// because repeating six field names across a thousand points would be most of
+// the payload, and this is served off a microcontroller over WiFi.
+// ---------------------------------------------------------------------------
+
+bool TrackStore::exportJson(EmitFn emit, void *ctx, uint32_t maxPoints)
+{
+    if (!mReady || !emit)
+        return false;
+    if (!maxPoints)
+        maxPoints = kJsonMaxPoints;
+
+    concurrency::LockGuard g(spiLock);
+    File f = trackFs().open(kPath, FILE_O_READ);
+    if (!f)
+        return false;
+
+    const size_t sz = f.size();
+    const uint32_t total = (sz > kHeaderBytes) ? (uint32_t)((sz - kHeaderBytes) / kRecordBytes) : 0;
+
+    // Keep every Nth point. Decimating rather than truncating means the whole
+    // route is still visible, just at lower resolution.
+    const uint32_t step = (total > maxPoints) ? ((total + maxPoints - 1) / maxPoints) : 1;
+
+    char buf[256];
+    int n = snprintf(buf, sizeof(buf), "{\"total\":%lu,\"step\":%lu,\"points\":[", (unsigned long)total,
+                     (unsigned long)step);
+    if (!emit(ctx, buf, (size_t)n)) {
+        f.close();
+        return false;
+    }
+
+    if (sz > kHeaderBytes)
+        f.seek(kHeaderBytes);
+
+    uint8_t rec[kRecordBytes];
+    TrackPoint pt;
+    uint32_t idx = 0;
+    bool first = true;
+    bool ok = true;
+
+    while (ok && f.read(rec, sizeof(rec)) == sizeof(rec)) {
+        const bool keep = (idx++ % step) == 0;
+        if (!keep)
+            continue;
+
+        decode(rec, pt);
+        if (pt.latI > 900000000 || pt.latI < -900000000 || pt.lonI > 1800000000 || pt.lonI < -1800000000)
+            continue;
+
+        n = snprintf(buf, sizeof(buf), "%s[%.6f,%.6f,%ld,%u,%d,%u]", first ? "" : ",", pt.latI / 1e7, pt.lonI / 1e7,
+                     (long)pt.altM, (unsigned)pt.bars, (int)pt.bestRssi,
+                     (pt.flags & kTrackHeardDirect) ? 1u : 0u);
+        first = false;
+        if (n > 0)
+            ok = emit(ctx, buf, (size_t)n);
+    }
+
+    if (ok)
+        ok = emit(ctx, "]}", 2);
+
+    f.close();
+    return ok;
+}
+
 bool TrackStore::erase()
 {
     concurrency::LockGuard g(spiLock);

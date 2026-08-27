@@ -176,3 +176,20 @@ html, body {
 .tracksum span { color: var(--dim); font-size: 12px; }
 .btn.ghost { background: transparent; color: var(--dim); border: 1px solid var(--border); }
 .note { color: var(--faint); font-size: 13px; line-height: 1.5; margin-top: 16px; }
+
+/* ── Track map ───────────────────────────────────────
+   Tiles come from the internet via the CLIENT, not the pager -- the device
+   stores no map data at all. That means the map only works when the phone has
+   a route out, i.e. when the pager is a WiFi client rather than the hotspot. */
+.mapwrap { position: relative; margin-bottom: 8px; }
+#map {
+  height: 320px; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--surface);
+}
+#map.is-hidden { display: none; }
+.legend {
+  display: flex; gap: 10px; flex-wrap: wrap;
+  margin-top: 8px; font-size: 12px; color: var(--dim);
+}
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; }
+.leaflet-container { background: var(--surface) !important; }

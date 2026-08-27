@@ -277,10 +277,127 @@
           '<div><b>' + worst + '</b><span>weakest mesh</span></div>' +
           '<div><b>' + Math.round(d.bytes / 1024) + ' KB</b><span>on device</span></div>' +
           (d.recording ? '<div><b>REC</b><span>recording</span></div>' : '');
+
+        loadMap();
       })
       .catch(function () {
         $('trackSummary').textContent = 'Could not reach the pager.';
       });
+  }
+
+
+  /* ── Map ──────────────────────────────────────────────
+     Leaflet and the tiles are fetched by the BROWSER from the internet, not by
+     the pager. The device stores no map data and serves none -- it only hands
+     over its own track. The consequence is that the map works when the pager is
+     joined to a WiFi network (so the phone still has a route out) and not when
+     the phone is attached to the pager's own hotspot, which has no uplink. The
+     GPX download works either way, so that is the fallback. */
+  var CDN = 'https://unpkg.com/leaflet@1.9.4/dist/';
+  var leafletState = 'idle'; // idle | loading | ready | failed
+  var map = null, trackLayer = null;
+
+  function barColour(bars) {
+    return ['#e0524a', '#e08b3c', '#d8c53c', '#8bc34a', '#3ec46d'][Math.max(0, Math.min(4, bars))];
+  }
+
+  function loadLeaflet() {
+    if (leafletState === 'ready' || leafletState === 'loading') return Promise.resolve(leafletState === 'ready');
+    leafletState = 'loading';
+
+    return new Promise(function (resolve) {
+      var css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = CDN + 'leaflet.css';
+      document.head.appendChild(css);
+
+      var js = document.createElement('script');
+      js.src = CDN + 'leaflet.js';
+
+      // No internet means onerror, but some captive setups just hang instead,
+      // so cap the wait rather than leaving the user staring at nothing.
+      var settled = false;
+      var done = function (ok) {
+        if (settled) return;
+        settled = true;
+        leafletState = ok ? 'ready' : 'failed';
+        resolve(ok);
+      };
+      js.onload = function () { done(true); };
+      js.onerror = function () { done(false); };
+      setTimeout(function () { done(typeof window.L !== 'undefined'); }, 6000);
+
+      document.head.appendChild(js);
+    });
+  }
+
+  function drawTrack(pts) {
+    if (!map) {
+      map = L.map('map', { attributionControl: true });
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(map);
+    }
+    if (trackLayer) { map.removeLayer(trackLayer); }
+    trackLayer = L.layerGroup().addTo(map);
+
+    // One polyline per consecutive run of equal signal, so the line itself
+    // shows where the mesh dropped off rather than needing a separate overlay.
+    var bounds = [];
+    for (var i = 0; i < pts.length - 1; i++) {
+      var a = pts[i], b = pts[i + 1];
+      bounds.push([a[0], a[1]]);
+      L.polyline([[a[0], a[1]], [b[0], b[1]]], {
+        color: barColour(a[3]), weight: 5, opacity: 0.9
+      }).addTo(trackLayer);
+    }
+    if (pts.length) bounds.push([pts[pts.length - 1][0], pts[pts.length - 1][1]]);
+
+    if (pts.length) {
+      var first = pts[0], last = pts[pts.length - 1];
+      L.circleMarker([first[0], first[1]], { radius: 6, color: '#fff', weight: 2, fillColor: '#3ec46d', fillOpacity: 1 })
+        .bindPopup('Start').addTo(trackLayer);
+      L.circleMarker([last[0], last[1]], { radius: 6, color: '#fff', weight: 2, fillColor: '#6e9eff', fillOpacity: 1 })
+        .bindPopup('End').addTo(trackLayer);
+    }
+
+    if (bounds.length) map.fitBounds(bounds, { padding: [20, 20] });
+    setTimeout(function () { map.invalidateSize(); }, 50);
+  }
+
+  function loadMap() {
+    var note = $('mapNote');
+    var el = $('map');
+
+    fetch('/api/track.json', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.points || !d.points.length) {
+          el.classList.add('is-hidden');
+          $('mapLegend').style.display = 'none';
+          note.textContent = '';
+          return;
+        }
+        note.textContent = 'Loading map…';
+        return loadLeaflet().then(function (ok) {
+          if (!ok) {
+            el.classList.add('is-hidden');
+            $('mapLegend').style.display = 'none';
+            note.innerHTML = 'Map unavailable &mdash; this device has no internet connection. ' +
+              'It works when the pager is joined to a WiFi network instead of running its own hotspot. ' +
+              'Download the GPX above to view the track elsewhere.';
+            return;
+          }
+          el.classList.remove('is-hidden');
+          $('mapLegend').style.display = '';
+          note.textContent = d.step > 1
+            ? ('Showing every ' + d.step + 'th point of ' + d.total.toLocaleString() + '.')
+            : '';
+          drawTrack(d.points);
+        });
+      })
+      .catch(function () { note.textContent = 'Could not load the track.'; });
   }
 
   $('trackClear').addEventListener('click', function () {

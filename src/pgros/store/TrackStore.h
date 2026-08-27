@@ -85,6 +85,15 @@ class TrackStore
     typedef bool (*EmitFn)(void *ctx, const char *data, size_t len);
     bool exportGpx(EmitFn emit, void *ctx);
 
+    // Streams the track as compact JSON for the portal map. Points are arrays,
+    // not objects, because the field names would otherwise be most of the
+    // payload. Decimated to at most maxPoints so a long track does not become a
+    // multi-megabyte response served off a microcontroller.
+    bool exportJson(EmitFn emit, void *ctx, uint32_t maxPoints);
+
+    // Enough to draw a useful line without flattening the interesting parts.
+    static constexpr uint32_t kJsonMaxPoints = 1500;
+
     bool erase();
     uint32_t bytesUsed();
 

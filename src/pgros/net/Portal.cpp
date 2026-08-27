@@ -656,6 +656,15 @@ static void handleTrackGpx(HTTPRequest *req, HTTPResponse *res)
 }
 
 // GET /api/track  -- summary, for the portal UI.
+static void handleTrackJson(HTTPRequest *req, HTTPResponse *res)
+{
+    (void)req;
+    res->setHeader("Content-Type", "application/json");
+    res->setHeader("Cache-Control", "no-store");
+    if (!trackStore.exportJson(&gpxEmit, res, TrackStore::kJsonMaxPoints))
+        res->print("{\"total\":0,\"points\":[]}");
+}
+
 static void handleTrackInfo(HTTPRequest *req, HTTPResponse *res)
 {
     (void)req;
@@ -754,6 +763,7 @@ bool Portal::start(uint16_t port)
     sServer->registerNode(new ResourceNode("/api/room", "POST", &handleRoomPost));
     sServer->registerNode(new ResourceNode("/track.gpx", "GET", &handleTrackGpx));
     sServer->registerNode(new ResourceNode("/api/track", "GET", &handleTrackInfo));
+    sServer->registerNode(new ResourceNode("/api/track.json", "GET", &handleTrackJson));
     sServer->registerNode(new ResourceNode("/api/track", "DELETE", &handleTrackDelete));
     sServer->registerNode(new ResourceNode("/api/gallery", "GET", &handleGalleryList));
     sServer->registerNode(new ResourceNode("/api/gallery", "DELETE", &handleGalleryDelete));
