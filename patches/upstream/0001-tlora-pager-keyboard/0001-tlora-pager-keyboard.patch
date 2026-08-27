@@ -1,5 +1,5 @@
 diff --git a/src/input/TLoraPagerKeyboard.cpp b/src/input/TLoraPagerKeyboard.cpp
-index 3b7e45d18..825592f4f 100644
+index 3b7e45d..825592f 100644
 --- a/src/input/TLoraPagerKeyboard.cpp
 +++ b/src/input/TLoraPagerKeyboard.cpp
 @@ -19,7 +19,12 @@
@@ -303,7 +303,7 @@ index 3b7e45d18..825592f4f 100644
 \ No newline at end of file
 +#endif
 diff --git a/src/input/TLoraPagerKeyboard.h b/src/input/TLoraPagerKeyboard.h
-index 06a4c7b63..a3698fa6e 100644
+index 06a4c7b..a3698fa 100644
 --- a/src/input/TLoraPagerKeyboard.h
 +++ b/src/input/TLoraPagerKeyboard.h
 @@ -18,13 +18,19 @@ class TLoraPagerKeyboard : public TCA8418KeyboardBase

@@ -37,6 +37,7 @@
 #include "core/EventBus.h"
 #include "store/ChatStore.h"
 #include "ui/App.h"
+#include "ui/EmojiFont.h"
 #include <stdint.h>
 
 namespace pgros {
@@ -118,6 +119,13 @@ class ConversationApp : public App
     void scrollToBottom(bool animate);
     void setEmptyVisible(bool visible);
 
+    // --- emoji picker -----------------------------------------------------
+    void buildEmojiPicker(lv_obj_t *parent);
+    void showEmojiPicker(bool on);
+    void moveEmojiSel(int16_t delta);
+    void refreshEmojiSel();
+    void insertEmoji(uint16_t idx);
+
     // --- composer ---------------------------------------------------------
     void refreshComposer();
     void clearDraft();
@@ -136,6 +144,18 @@ class ConversationApp : public App
     lv_obj_t *mDraftLabel = nullptr; // draft text + caret
     lv_obj_t *mPlaceholder = nullptr;
     lv_obj_t *mCounter = nullptr;
+
+    // Emoji grid. Built on first use and then kept -- see buildEmojiPicker().
+    static constexpr uint16_t kMaxEmojiCells = 192;
+    static constexpr uint8_t kEmojiCols = 12;
+    static constexpr int16_t kEmojiCellW = 39;
+    static constexpr int16_t kEmojiCellH = 34;
+
+    lv_obj_t *mEmoji = nullptr;
+    lv_obj_t *mEmojiCell[kMaxEmojiCells] = {nullptr};
+    uint16_t mEmojiCount = 0;
+    uint16_t mEmojiSel = 0;
+    bool mEmojiOpen = false;
 
     RowView mRows[kMaxRows];
     RowMeta mMeta[kMaxRows];

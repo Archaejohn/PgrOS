@@ -1,5 +1,5 @@
 diff --git a/platformio.ini b/platformio.ini
-index 5f43d64d6..9369397b9 100644
+index 5f43d64..9369397 100644
 --- a/platformio.ini
 +++ b/platformio.ini
 @@ -9,6 +9,9 @@ extra_configs =
@@ -13,7 +13,7 @@ index 5f43d64d6..9369397b9 100644
  description = Meshtastic
  
 diff --git a/src/main.cpp b/src/main.cpp
-index 3f606706f..681bb927c 100644
+index 3f60670..681bb92 100644
 --- a/src/main.cpp
 +++ b/src/main.cpp
 @@ -44,6 +44,9 @@

@@ -48,6 +48,7 @@
 
 #include "Theme.h"
 #include "configuration.h"
+#include "ui/EmojiFont.h"
 #include <lvgl.h>
 
 namespace pgros {
@@ -106,10 +107,30 @@ void prepare(lv_style_t *s)
 // UI degrades to one font instead of not existing.
 // ---------------------------------------------------------------------------
 
+// Emoji come from a fallback font rather than from the text fonts themselves.
+// lv_font_get_glyph_dsc() walks the fallback chain whenever the primary font
+// reports a placeholder, so hanging it here -- once, on the three fonts every
+// style uses -- makes emoji render in message bubbles, contact names and the
+// composer without any of them knowing it happened.
+//
+// LVGL ships its fonts const, so each is copied into a mutable struct we own.
+// The copy shares the original glyph data and callbacks; only .fallback differs.
+static const lv_font_t *withEmoji(const lv_font_t *base, lv_font_t *slot, bool *done)
+{
+    if (!*done) {
+        *done = true;
+        *slot = *base;
+        slot->fallback = emoji::font();
+    }
+    return slot;
+}
+
 const lv_font_t *Theme::fontSmall() const
 {
 #if LV_FONT_MONTSERRAT_12
-    return &lv_font_montserrat_12;
+    static lv_font_t f;
+    static bool done = false;
+    return withEmoji(&lv_font_montserrat_12, &f, &done);
 #else
     return LV_FONT_DEFAULT;
 #endif
@@ -118,7 +139,9 @@ const lv_font_t *Theme::fontSmall() const
 const lv_font_t *Theme::fontBody() const
 {
 #if LV_FONT_MONTSERRAT_14
-    return &lv_font_montserrat_14;
+    static lv_font_t f;
+    static bool done = false;
+    return withEmoji(&lv_font_montserrat_14, &f, &done);
 #else
     return LV_FONT_DEFAULT;
 #endif
@@ -127,7 +150,9 @@ const lv_font_t *Theme::fontBody() const
 const lv_font_t *Theme::fontLarge() const
 {
 #if LV_FONT_MONTSERRAT_20
-    return &lv_font_montserrat_20;
+    static lv_font_t f;
+    static bool done = false;
+    return withEmoji(&lv_font_montserrat_20, &f, &done);
 #else
     return LV_FONT_DEFAULT;
 #endif

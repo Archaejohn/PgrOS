@@ -1,0 +1,15 @@
+diff --git a/src/graphics/emotes.cpp b/src/graphics/emotes.cpp
+index 9fb26fa..c1c70ee 100644
+--- a/src/graphics/emotes.cpp
++++ b/src/graphics/emotes.cpp
+@@ -1,5 +1,9 @@
+ #include "configuration.h"
+-#if HAS_SCREEN
++// The emote TABLE is display-independent data: UTF-8 code points paired with
++// 16x16 bitmaps. Only the renderer needs a screen. Gating the data on HAS_SCREEN
++// leaves any screenless build unable to identify an emoji it receives over the
++// mesh, even to substitute its own glyph.
++#if HAS_SCREEN || defined(MESHTASTIC_INCLUDE_EMOTES)
+ #include "emotes.h"
+ 
+ namespace graphics

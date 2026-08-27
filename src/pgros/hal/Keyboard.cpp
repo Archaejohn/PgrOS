@@ -221,6 +221,10 @@ uint32_t Keyboard::translate(const InputEvent *ev)
             return key::Tab;
         if (ch == 0x1B)
             return key::Cancel;
+        // Upstream's emote-list code, which the patched TCA8418 driver now emits
+        // on a double tap of SYM.
+        if (ch == INPUT_BROKER_MSG_EMOTE_LIST)
+            return key::Emoji;
         return key::None;
     }
 

@@ -346,6 +346,12 @@ void ConversationApp::onShow(const AppArgs &args)
 
 void ConversationApp::onHide()
 {
+    // The picker is a transient mode, not part of the draft. Leaving it open
+    // would put the grid back on screen next time in place of the messages the
+    // user came to read.
+    if (mEmojiOpen)
+        showEmojiPicker(false);
+
     // The draft is deliberately kept: coming back to a half-typed message is the
     // behaviour every phone has, and losing it to an accidental Back is the
     // behaviour nobody wants. It is only cleared on send or on an explicit Back
@@ -731,6 +737,149 @@ void ConversationApp::setEmptyVisible(bool visible)
 }
 
 // ---------------------------------------------------------------------------
+// Emoji picker
+//
+// A mode, not a popup. Double-tapping SYM swaps the message list for a grid of
+// emoji and swaps it back, so the gesture reads the same way the emoji key on a
+// phone keyboard does. The composer stays visible underneath throughout: you are
+// still writing a message, and watching the draft grow is the whole point.
+//
+// The grid is built on first use and then kept. Around 125 cells is a few tens
+// of kilobytes of LVGL objects, which is worth paying once for someone who uses
+// emoji and not at all for someone who does not.
+// ---------------------------------------------------------------------------
+
+void ConversationApp::buildEmojiPicker(lv_obj_t *parent)
+{
+    if (mEmoji)
+        return;
+
+    const Palette &p = theme.colors();
+
+    mEmoji = lv_obj_create(parent);
+    lv_obj_remove_style_all(mEmoji);
+    lv_obj_set_size(mEmoji, metrics::screenW, kListH);
+    lv_obj_set_pos(mEmoji, 0, 0);
+    lv_obj_set_style_bg_color(mEmoji, lv_color_hex(p.bg), 0);
+    lv_obj_set_style_bg_opa(mEmoji, LV_OPA_COVER, 0);
+    lv_obj_set_scroll_dir(mEmoji, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(mEmoji, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_add_flag(mEmoji, LV_OBJ_FLAG_HIDDEN);
+
+    mEmojiCount = emoji::count();
+    if (mEmojiCount > kMaxEmojiCells)
+        mEmojiCount = kMaxEmojiCells;
+
+    for (uint16_t i = 0; i < mEmojiCount; ++i) {
+        const uint16_t row = i / kEmojiCols;
+        const uint16_t col = i % kEmojiCols;
+
+        lv_obj_t *cell = lv_obj_create(mEmoji);
+        lv_obj_remove_style_all(cell);
+        lv_obj_set_size(cell, kEmojiCellW, kEmojiCellH);
+        lv_obj_set_pos(cell, (int16_t)(metrics::padS + col * kEmojiCellW), (int16_t)(row * kEmojiCellH));
+        lv_obj_set_style_radius(cell, metrics::radiusS, 0);
+        lv_obj_set_style_bg_opa(cell, LV_OPA_TRANSP, 0);
+        lv_obj_remove_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
+
+        // fontBody() carries the emoji fallback, so the glyph resolves here the
+        // same way it does inside a message bubble. One code path, so the picker
+        // can never offer something the bubbles cannot draw.
+        lv_obj_t *lbl = lv_label_create(cell);
+        lv_obj_set_style_text_font(lbl, theme.fontBody(), 0);
+        lv_obj_set_style_text_color(lbl, lv_color_hex(p.text), 0);
+        lv_label_set_text(lbl, emoji::text(i));
+        lv_obj_center(lbl);
+
+        mEmojiCell[i] = cell;
+    }
+
+    // Nothing to show is worth saying out loud; a silent empty grid looks like a
+    // hang. This only happens if the upstream emote table is compiled out.
+    if (mEmojiCount == 0) {
+        lv_obj_t *none = lv_label_create(mEmoji);
+        lv_obj_set_style_text_font(none, theme.fontBody(), 0);
+        lv_obj_set_style_text_color(none, lv_color_hex(p.textFaint), 0);
+        lv_label_set_text(none, "No emoji available");
+        lv_obj_center(none);
+    }
+}
+
+void ConversationApp::refreshEmojiSel()
+{
+    const Palette &p = theme.colors();
+    for (uint16_t i = 0; i < mEmojiCount; ++i) {
+        if (!mEmojiCell[i])
+            continue;
+        const bool sel = (i == mEmojiSel);
+        lv_obj_set_style_bg_color(mEmojiCell[i], lv_color_hex(p.surfaceAlt), 0);
+        lv_obj_set_style_bg_opa(mEmojiCell[i], sel ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    }
+
+    if (mEmojiSel < mEmojiCount && mEmojiCell[mEmojiSel])
+        lv_obj_scroll_to_view(mEmojiCell[mEmojiSel], LV_ANIM_ON);
+}
+
+void ConversationApp::moveEmojiSel(int16_t delta)
+{
+    if (!mEmojiCount)
+        return;
+
+    const int32_t next = (int32_t)mEmojiSel + delta;
+    // Clamp rather than wrap. Wrapping a grid puts the cursor a screen away from
+    // where the thumb expected it, and there is no visual cue that it happened.
+    if (next < 0 || next >= (int32_t)mEmojiCount)
+        return;
+
+    mEmojiSel = (uint16_t)next;
+    refreshEmojiSel();
+}
+
+void ConversationApp::showEmojiPicker(bool on)
+{
+    if (on) {
+        buildEmojiPicker(mRoot);
+        if (!mEmoji)
+            return;
+        mEmojiOpen = true;
+        lv_obj_add_flag(mList, LV_OBJ_FLAG_HIDDEN);
+        if (mEmpty)
+            lv_obj_add_flag(mEmpty, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(mEmoji, LV_OBJ_FLAG_HIDDEN);
+        refreshEmojiSel();
+    } else {
+        mEmojiOpen = false;
+        if (mEmoji)
+            lv_obj_add_flag(mEmoji, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(mList, LV_OBJ_FLAG_HIDDEN);
+        // setEmptyVisible() owns whether the empty state belongs on screen; the
+        // picker must not decide that for it.
+        setEmptyVisible(mCount == 0);
+    }
+}
+
+void ConversationApp::insertEmoji(uint16_t idx)
+{
+    const char *utf8 = emoji::text(idx);
+    const size_t n = strlen(utf8);
+    if (!n)
+        return;
+
+    // mMaxLen counts BYTES, because that is what the mesh payload counts. A
+    // four-byte emoji costs four of the 233, and saying so honestly here beats
+    // letting the send path truncate a multi-byte sequence into mojibake.
+    if (mDraftLen + n > mMaxLen || mDraftLen + n > kMaxTextLen) {
+        shell.toast("Message is full", 1);
+        return;
+    }
+
+    memcpy(mDraft + mDraftLen, utf8, n);
+    mDraftLen += (uint16_t)n;
+    mDraft[mDraftLen] = 0;
+    refreshComposer();
+}
+
+// ---------------------------------------------------------------------------
 // Composer
 // ---------------------------------------------------------------------------
 
@@ -855,6 +1004,77 @@ bool ConversationApp::retryNewestFailed()
 
 bool ConversationApp::onKey(uint32_t k)
 {
+    // Double tap of SYM. A toggle in both directions, so the same gesture that
+    // reached the emoji grid is the one that leaves it.
+    if (k == key::Emoji) {
+        showEmojiPicker(!mEmojiOpen);
+        return true;
+    }
+
+    // While the grid is up it owns navigation and Enter. Everything below --
+    // scrolling history, sending -- belongs to the conversation and would be
+    // wrong here.
+    if (mEmojiOpen) {
+        switch (k) {
+        case key::Left:
+            moveEmojiSel(-1);
+            return true;
+        case key::Right:
+            moveEmojiSel(1);
+            return true;
+        case key::Up:
+            moveEmojiSel(-(int16_t)kEmojiCols);
+            return true;
+        case key::Down:
+            moveEmojiSel(kEmojiCols);
+            return true;
+        case key::RotateCcw:
+            moveEmojiSel(-1);
+            return true;
+        case key::RotateCw:
+            moveEmojiSel(1);
+            return true;
+
+        case key::Enter:
+        case key::Select:
+            insertEmoji(mEmojiSel);
+            // Deliberately stays open. Emoji arrive in runs far more often than
+            // singly, and closing after each one would make ":) :) :)" four
+            // gestures instead of one.
+            return true;
+
+        case key::Back:
+        case key::Cancel:
+            showEmojiPicker(false);
+            return true;
+
+        case key::Backspace:
+            // Backspace belongs to the draft even here, so a mistyped emoji is
+            // undone without leaving the grid. One UTF-8 character, not one
+            // byte, or the remains of a four-byte sequence become mojibake.
+            if (mDraftLen) {
+                do {
+                    mDraftLen--;
+                } while (mDraftLen && ((uint8_t)mDraft[mDraftLen] & 0xC0) == 0x80);
+                mDraft[mDraftLen] = 0;
+                refreshComposer();
+            }
+            return true;
+
+        default:
+            break;
+        }
+
+        // Reaching for a letter means reaching for the keyboard. Close and type
+        // it, rather than silently swallowing the keystroke.
+        if (key::isPrintable(k)) {
+            showEmojiPicker(false);
+            // fall through to the normal insert path below
+        } else {
+            return true;
+        }
+    }
+
     switch (k) {
     case key::Enter:
     case key::Select:
@@ -863,7 +1083,13 @@ bool ConversationApp::onKey(uint32_t k)
 
     case key::Backspace:
         if (mDraftLen) {
-            mDraft[--mDraftLen] = 0;
+            // One UTF-8 character. An emoji is up to four bytes and deleting one
+            // of them leaves an invalid sequence that renders as a placeholder
+            // box and goes out over the mesh as garbage.
+            do {
+                mDraftLen--;
+            } while (mDraftLen && ((uint8_t)mDraft[mDraftLen] & 0xC0) == 0x80);
+            mDraft[mDraftLen] = 0;
             refreshComposer();
         }
         // Consumed either way: Backspace on an empty composer must not fall

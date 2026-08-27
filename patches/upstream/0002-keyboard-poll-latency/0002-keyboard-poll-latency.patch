@@ -1,5 +1,5 @@
 diff --git a/src/input/kbI2cBase.cpp b/src/input/kbI2cBase.cpp
-index d4851c7f6..d693c16bf 100644
+index d4851c7..d693c16 100644
 --- a/src/input/kbI2cBase.cpp
 +++ b/src/input/kbI2cBase.cpp
 @@ -207,7 +207,7 @@ int32_t KbI2cBase::runOnce()
@@ -93,7 +93,7 @@ index d4851c7f6..d693c16bf 100644
  
  void KbI2cBase::toggleBacklight(bool on)
 diff --git a/src/input/kbI2cBase.h b/src/input/kbI2cBase.h
-index a2f2e3cc0..34ffd19e8 100644
+index a2f2e3c..34ffd19 100644
 --- a/src/input/kbI2cBase.h
 +++ b/src/input/kbI2cBase.h
 @@ -31,4 +31,9 @@ class KbI2cBase : public Observable<const InputEvent *>, public concurrency::OST

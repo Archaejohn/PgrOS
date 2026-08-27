@@ -67,6 +67,11 @@ static constexpr uint32_t Fn3 = 0x112;
 static constexpr uint32_t Fn4 = 0x113;
 static constexpr uint32_t Fn5 = 0x114;
 
+// Double tap of SYM. A toggle, not an open: the emoji grid replaces the normal
+// typing surface and the same gesture puts it back, which is how every phone
+// keyboard behaves and therefore what a thumb expects.
+static constexpr uint32_t Emoji = 0x115;
+
 inline bool isPrintable(uint32_t k)
 {
     return k >= 0x20 && k <= 0x7E;
