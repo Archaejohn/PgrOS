@@ -177,6 +177,26 @@ class MeshBridge
     // Current text, for the two name fields. Always NUL-terminates.
     void nodeConfigText(NodeField f, char *out, size_t outLen) const;
 
+    // --- mesh density -----------------------------------------------------
+    //
+    // Signal-bar equivalent for the mesh rather than for one link. Most of what
+    // a node hears is traffic it merely relays -- silent from the user's point of
+    // view -- and that traffic is exactly what says how alive the mesh is around
+    // you. Counted promiscuously, including packets we cannot decrypt.
+    struct MeshDensity {
+        uint8_t directNeighbours; // distinct nodes heard at zero hops, recently
+        uint16_t nodesRecent;     // nodes heard at all, recently
+        uint16_t packetsPerMin;   // everything on the air we could hear
+        uint8_t utilizationPct;   // channel airtime over the last minute
+        uint8_t bars;             // 0..4, for the status bar
+    };
+
+    // Safe from any task: plain integer reads of counters the mesh task writes.
+    MeshDensity density() const;
+
+    // A node counts as "recent" for density purposes for this long.
+    static constexpr uint32_t kDensityRecentSecs = 30 * 60;
+
     // --- discovery --------------------------------------------------------
     //
     // Broadcasts our NodeInfo with wantReplies set, which asks everyone in

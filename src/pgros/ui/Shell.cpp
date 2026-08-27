@@ -4,6 +4,7 @@
 
 #include "configuration.h"
 
+#include "core/MeshBridge.h"
 #include "core/Policy.h"
 #include "hal/Display.h"
 #include "hal/Keyboard.h"
@@ -260,11 +261,27 @@ void Shell::run()
                 app->onTick();
             updateStatusBar();
 
+            // The signal indicator had no producer. Point it at mesh density:
+            // how much mesh is around this node, counted mostly from traffic we
+            // silently relay for other people.
+            statusBar.setSignal(mesh.density().bars);
+
             // Inactivity blanking. PowerFSM would normally do this via
             // screen->setOn(false), but that call is a no-op stub in our build,
             // so the policy lives here.
+            // Read the clock fresh. frameStart was sampled at the top of this
+            // frame, but noteActivity() runs later -- during input handling, and
+            // setDisplayOn(true) spends ~70 ms ramping the backlight before
+            // returning. So mLastActivityMs is routinely NEWER than frameStart,
+            // and `frameStart - mLastActivityMs` underflows to ~4.29 billion,
+            // which beats any timeout. The screen blanked the instant you
+            // scrolled quickly, woke on the next click, and blanked again a
+            // frame later.
+            const uint32_t nowMs = millis();
+            const uint32_t idleMs = (nowMs > mLastActivityMs) ? (nowMs - mLastActivityMs) : 0;
+
             const uint16_t timeout = policy.get().screenTimeoutS;
-            if (mDisplayOn && timeout && (frameStart - mLastActivityMs) > (uint32_t)timeout * 1000)
+            if (mDisplayOn && timeout && idleMs > (uint32_t)timeout * 1000)
                 setDisplayOn(false);
         }
 

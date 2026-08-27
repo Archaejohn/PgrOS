@@ -40,6 +40,7 @@
 #include "core/TimeZone.h"
 #include "hal/Silence.h"
 #include "gps/RTC.h"
+#include "airtime.h"
 #include "mesh/Channels.h"
 #include "mesh/MeshModule.h"
 #include "mesh/MeshService.h"
@@ -695,6 +696,136 @@ bool MeshBridge::applyNodeConfig(NodeField f, int32_t value, const char *text)
     return needsReboot;
 }
 
+// ---------------------------------------------------------------------------
+// Mesh density
+//
+// The idea: signal bars, but for the mesh rather than for one link. A phone's
+// bars say "how well can I reach the tower"; the useful question here is "how
+// much mesh is around me", and the answer is mostly carried by traffic the user
+// never sees -- packets this node hears and relays on behalf of others.
+//
+// So the counter is a promiscuous module: isPromiscuous plus encryptedOk means
+// callModules() hands it every packet the radio decoded a header for, including
+// ones addressed to other people and ones on channels we hold no key for. That
+// silent relay traffic is the signal.
+//
+// Two inputs, deliberately:
+//
+//   packets/min      how busy the air is around this node
+//   direct neighbours how many distinct nodes are in actual radio range
+//
+// Neighbours dominate the bar count, because five nodes you can reach directly
+// is a denser mesh than one chatty node three hops away. Airtime comes from
+// Meshtastic's own AirTime, which already measures exactly this.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+// Six ten-second buckets: one rolling minute, matching AirTime's own window.
+constexpr uint8_t kDensityBuckets = 6;
+constexpr uint32_t kDensityBucketMs = 10000;
+
+uint16_t gPktBucket[kDensityBuckets] = {0};
+uint8_t gPktBucketIdx = 0;
+uint32_t gPktBucketStartMs = 0;
+
+void densityCountPacket()
+{
+    const uint32_t now = millis();
+    if (!gPktBucketStartMs)
+        gPktBucketStartMs = now;
+
+    // Advance, clearing everything we skipped so a quiet spell does not leave
+    // stale counts behind to be counted again.
+    while (now - gPktBucketStartMs >= kDensityBucketMs) {
+        gPktBucketStartMs += kDensityBucketMs;
+        gPktBucketIdx = (uint8_t)((gPktBucketIdx + 1) % kDensityBuckets);
+        gPktBucket[gPktBucketIdx] = 0;
+    }
+    if (gPktBucket[gPktBucketIdx] < 0xFFFF)
+        gPktBucket[gPktBucketIdx]++;
+}
+
+uint16_t densityPacketsPerMin()
+{
+    uint32_t total = 0;
+    for (uint8_t i = 0; i < kDensityBuckets; ++i)
+        total += gPktBucket[i];
+    return (uint16_t)(total > 0xFFFF ? 0xFFFF : total);
+}
+} // namespace
+
+// Counts everything, replies to nothing.
+class PgrosDensityModule : public MeshModule
+{
+  public:
+    PgrosDensityModule() : MeshModule("pgrosDensity")
+    {
+        isPromiscuous = true; // packets addressed to other nodes count too
+        encryptedOk = true;   // so do ones we cannot decrypt -- they are still mesh
+    }
+
+  protected:
+    bool wantPacket(const meshtastic_MeshPacket *p) override { return p != nullptr; }
+
+    ProcessMessage handleReceived(const meshtastic_MeshPacket &mp) override
+    {
+        (void)mp;
+        densityCountPacket();
+        return ProcessMessage::CONTINUE; // never swallow anything
+    }
+};
+
+static PgrosDensityModule *gDensityModule = nullptr;
+
+MeshBridge::MeshDensity MeshBridge::density() const
+{
+    MeshDensity d = {};
+
+    d.packetsPerMin = densityPacketsPerMin();
+
+    if (airTime)
+        d.utilizationPct = (uint8_t)std::min(100.0f, std::max(0.0f, airTime->channelUtilizationPercent()));
+
+    // Walk the published snapshot rather than NodeDB: this may be called from
+    // the UI task, and meshNodes reallocates.
+    NodeBrief nodes[kNodeSnapshotMax];
+    const size_t n = listNodes(nodes, kNodeSnapshotMax);
+    const uint32_t nowSecs = getTime();
+
+    for (size_t i = 0; i < n; ++i) {
+        if (nodes[i].flags & kNodeSelf)
+            continue;
+        // A node with no timestamp cannot be judged recent; skip rather than
+        // guess, otherwise a cold boot reports a dense mesh from stale entries.
+        if (!nodes[i].lastHeard || !nowSecs)
+            continue;
+        if (nowSecs - nodes[i].lastHeard > kDensityRecentSecs)
+            continue;
+
+        d.nodesRecent++;
+        if ((nodes[i].flags & kNodeHopsKnown) && nodes[i].hopsAway == 0)
+            d.directNeighbours++;
+    }
+
+    // Bars. Neighbours lead; packet rate can lift a sparse-but-busy mesh by one.
+    if (d.directNeighbours >= 7)
+        d.bars = 4;
+    else if (d.directNeighbours >= 4)
+        d.bars = 3;
+    else if (d.directNeighbours >= 2)
+        d.bars = 2;
+    else if (d.directNeighbours >= 1)
+        d.bars = 1;
+    else
+        d.bars = 0;
+
+    if (d.bars < 4 && d.packetsPerMin >= 30)
+        d.bars++;
+
+    return d;
+}
+
 bool MeshBridge::startDiscovery()
 {
     if (!nodeInfoModule) {
@@ -776,6 +907,7 @@ bool MeshBridge::begin()
     // The MeshModule constructor registers it. There is nothing else to call.
     gRoutingModule = new PgrosRoutingObserver();
     gReceiptModule = new PgrosReceiptModule();
+    gDensityModule = new PgrosDensityModule();
 
     gNodeObserver = new PgrosNodeObserver();
     gNodeObserver->observe(&nodeDB->newStatus);

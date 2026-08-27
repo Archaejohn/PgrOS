@@ -38,6 +38,8 @@ enum : uint8_t {
     kFlush,
     kDropped,
     kMesh,
+    kNeighbours,
+    kAirtime,
     kLineCount
 };
 
@@ -131,6 +133,8 @@ void DiagnosticsApp::onCreate(lv_obj_t *parent)
     addLine(mList, "Flush us");
     addLine(mList, "Dropped");
     addLine(mList, "Mesh rx/tx");
+    addLine(mList, "Neighbours");
+    addLine(mList, "Air / pkt-min");
 
     lv_obj_t *hint = lv_label_create(mRoot);
     lv_obj_set_style_text_font(hint, theme.fontSmall(), 0);
@@ -197,6 +201,10 @@ void DiagnosticsApp::refresh()
                                     lv_color_hex(drops ? theme.colors().warn : theme.colors().text), 0);
 
     setValue(kMesh, "%lu/%lu", (unsigned long)mesh.messagesReceived(), (unsigned long)mesh.messagesSent());
+
+    const auto den = mesh.density();
+    setValue(kNeighbours, "%u direct / %u seen", (unsigned)den.directNeighbours, (unsigned)den.nodesRecent);
+    setValue(kAirtime, "%u%% / %u", (unsigned)den.utilizationPct, (unsigned)den.packetsPerMin);
 
     // Crash banner.
     if (panic::hadCrash()) {
