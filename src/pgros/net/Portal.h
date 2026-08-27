@@ -102,6 +102,20 @@ class Portal
     // business decoding JPEG just to make a grid. Capped far tighter than the
     // full image so a mislabelled form field cannot smuggle a large file in.
     static constexpr uint32_t kMaxThumbBytes = 24 * 1024;
+
+    // Photos land on the SD card when one is present, and a 59 GB card has no
+    // use for a 512 KB ceiling -- that limit exists to protect the 3.375 MiB
+    // internal partition, which also holds the Meshtastic config and the chat
+    // log. maxUploadBytes() picks the right one, and the browser reads it from
+    // /api/gallery so it knows how hard to compress.
+    static constexpr uint32_t kMaxUploadBytesSd = 4 * 1024 * 1024;
+
+    // How long a stalled upload waits for more data before being abandoned.
+    // Generous: a phone on a busy AP can pause for a while mid-transfer.
+    static constexpr uint32_t kUploadStallMs = 8000;
+
+    // Upload ceiling for wherever the gallery currently lives.
+    uint32_t maxUploadBytes() const;
     static constexpr uint32_t kGalleryReserveBytes = 256 * 1024; // keep free for logs
 
   private:

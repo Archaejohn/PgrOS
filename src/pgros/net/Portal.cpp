@@ -336,7 +336,7 @@ static void handleGalleryList(HTTPRequest *req, HTTPResponse *res)
         out += ",\"thumb\":" + std::string(items[i].hasThumb ? "true" : "false") + "}";
     }
     out += "],\"free\":" + std::to_string(portal.galleryFreeBytes());
-    out += ",\"max\":" + std::to_string((uint32_t)Portal::kMaxUploadBytes) + "}";
+    out += ",\"max\":" + std::to_string(portal.maxUploadBytes()) + "}";
     sendJson(res, out);
 }
 
@@ -399,12 +399,36 @@ static void handlePhoto(HTTPRequest *req, HTTPResponse *res)
 }
 
 // POST /api/upload  (multipart/form-data)
+//
+// Two things about HTTPMultipartBodyParser make the obvious loop wrong.
+//
+// First, read() returns 0 for TWO different reasons: the field genuinely ended,
+// or the network has not delivered the next bytes yet. fillBuffer() breaks out
+// on a zero readChars() and logs "Multipart incomplete", and read() then returns
+// 0 with the field still open. Treating that as end-of-data stores a truncated
+// file -- a JPEG cut off part way, which renders as a band across the top and
+// nothing below. We drain the first TCP burst far faster than WiFi delivers the
+// rest, so it happens on almost every upload. endOfField() is the only
+// authority on whether the field is over; a zero read otherwise means "wait".
+//
+// Second, read() stops at the first CR so as not to overrun a boundary, and
+// binary JPEG data is full of 0x0D. Chunks therefore come back tiny and
+// irregular. Writing each one straight to the card would be painfully slow, so
+// they are gathered into a staging buffer and flushed in blocks.
 static void handleUpload(HTTPRequest *req, HTTPResponse *res)
 {
-    if (portal.galleryFreeBytes() < Portal::kMaxUploadBytes) {
+    const uint32_t cap = portal.maxUploadBytes();
+
+    if (portal.galleryFreeBytes() < cap) {
         sendJson(res, "{\"error\":\"full\"}", 507);
         return;
     }
+
+    // Static, not stack: this handler runs on the Arduino loop task, whose 8 KB
+    // stack is also carrying the HTTP server and the filesystem beneath it.
+    // Safe because Portal::loop() services one request at a time.
+    static uint8_t sChunk[512];
+    static uint8_t sStage[2048];
 
     HTTPMultipartBodyParser parser(req);
     bool wrote = false;
@@ -438,10 +462,13 @@ static void handleUpload(HTTPRequest *req, HTTPResponse *res)
 
         // A thumbnail is small by construction; cap it far tighter than the
         // full image so a mislabelled field cannot smuggle a large file in.
-        const uint32_t cap = isThumb ? Portal::kMaxThumbBytes : Portal::kMaxUploadBytes;
+        const uint32_t fieldCap = isThumb ? Portal::kMaxThumbBytes : cap;
 
-        concurrency::LockGuard g(spiLock);
-        File f = galleryFs().open(path, FILE_O_WRITE);
+        File f;
+        {
+            concurrency::LockGuard g(spiLock);
+            f = galleryFs().open(path, FILE_O_WRITE);
+        }
         if (!f) {
             if (isThumb)
                 continue;
@@ -450,29 +477,82 @@ static void handleUpload(HTTPRequest *req, HTTPResponse *res)
         }
 
         uint32_t total = 0;
-        uint8_t buf[512];
+        size_t staged = 0;
         bool overflow = false;
+        bool stalled = false;
+        uint32_t lastProgressMs = millis();
+
+        // NOTE: spiLock is taken per flush, never across the whole transfer.
+        // The card shares SPI2 with the LoRa radio and the display, and holding
+        // it for the seconds a multi-hundred-KB upload takes would stall both.
+        auto flushStage = [&]() -> bool {
+            if (!staged)
+                return true;
+            const size_t want = staged;
+            staged = 0;
+            concurrency::LockGuard g(spiLock);
+            // A short write means the card or the partition is full. Silently
+            // dropping the tail is what produces a half-decoded image, so treat
+            // anything less than the whole block as a failure.
+            return f.write(sStage, want) == want;
+        };
+
         while (!parser.endOfField()) {
-            const size_t got = parser.read(buf, sizeof(buf));
-            if (!got)
-                break;
+            const size_t got = parser.read(sChunk, sizeof(sChunk));
+
+            if (got == 0) {
+                // Ambiguous: end of field, or the network is just behind.
+                if (parser.endOfField())
+                    break;
+                if (millis() - lastProgressMs > Portal::kUploadStallMs) {
+                    stalled = true;
+                    break;
+                }
+                esp_task_wdt_reset();
+                delay(2); // let TCP deliver more
+                continue;
+            }
+
+            lastProgressMs = millis();
             total += got;
-            if (total > cap) {
+            if (total > fieldCap) {
                 overflow = true;
                 break;
             }
-            f.write(buf, got);
+
+            if (staged + got > sizeof(sStage)) {
+                if (!flushStage()) {
+                    overflow = true; // out of space; treat as a write failure
+                    break;
+                }
+            }
+            memcpy(sStage + staged, sChunk, got);
+            staged += got;
+
             esp_task_wdt_reset();
         }
-        f.close();
 
-        if (overflow) {
-            galleryFs().remove(path);
+        if (!overflow && !stalled)
+            flushStage();
+
+        {
+            concurrency::LockGuard g(spiLock);
+            f.close();
+        }
+
+        if (overflow || stalled) {
+            {
+                concurrency::LockGuard g(spiLock);
+                galleryFs().remove(path);
+            }
             if (isThumb)
                 continue; // keep the full image; the grid falls back to it
-            sendJson(res, "{\"error\":\"too_large\"}", 413);
+            LOG_WARN("PgrOS portal: upload %s after %u bytes", stalled ? "stalled" : "too large", (unsigned)total);
+            sendJson(res, stalled ? "{\"error\":\"stalled\"}" : "{\"error\":\"too_large\"}", stalled ? 504 : 413);
             return;
         }
+
+        LOG_INFO("PgrOS portal: stored %s (%u bytes)", name, (unsigned)total);
 
         if (!isThumb) {
             wrote = true;
@@ -491,6 +571,7 @@ static void handleUpload(HTTPRequest *req, HTTPResponse *res)
     out += "\"}";
     sendJson(res, out);
 }
+
 
 // Look up a built-in asset. Declared in PortalAssets.h; implemented here so the
 // generated file stays pure data.
@@ -769,6 +850,11 @@ void Portal::galleryClear()
     const size_t n = galleryList(items, 64);
     for (size_t i = 0; i < n; ++i)
         galleryDelete(items[i].name);
+}
+
+uint32_t Portal::maxUploadBytes() const
+{
+    return sUseSd ? kMaxUploadBytesSd : kMaxUploadBytes;
 }
 
 uint32_t Portal::galleryFreeBytes() const
