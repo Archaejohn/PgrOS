@@ -154,8 +154,13 @@ uint32_t Keyboard::translate(const InputEvent *ev)
         return key::UpLong;
     case INPUT_BROKER_DOWN_LONG:
         return key::DownLong;
+    // The physical Backspace key and a Back navigation gesture arrive as the
+    // SAME event: kbI2cBase maps the keyboard's BSP to INPUT_BROKER_BACK and
+    // puts 0x08 in kbchar. Treating them alike made Backspace act as "cancel",
+    // which in a text field discards everything the user had typed -- reported
+    // as "backspace deletes the whole box".
     case INPUT_BROKER_BACK:
-        return key::Back;
+        return (ev->kbchar == 0x08 || ev->kbchar == 0x7F) ? key::Backspace : key::Back;
     case INPUT_BROKER_CANCEL:
         return key::Cancel;
 

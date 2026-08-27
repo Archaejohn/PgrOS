@@ -1,5 +1,5 @@
 diff --git a/src/input/TLoraPagerKeyboard.cpp b/src/input/TLoraPagerKeyboard.cpp
-index 3b7e45d18..10e07c467 100644
+index 3b7e45d18..825592f4f 100644
 --- a/src/input/TLoraPagerKeyboard.cpp
 +++ b/src/input/TLoraPagerKeyboard.cpp
 @@ -19,7 +19,12 @@
@@ -93,12 +93,12 @@ index 3b7e45d18..10e07c467 100644
  TLoraPagerKeyboard::TLoraPagerKeyboard()
 -    : TCA8418KeyboardBase(_TCA8418_ROWS, _TCA8418_COLS), modifierFlag(0), last_modifier_time(0), last_key(UINT8_MAX),
 -      next_key(UINT8_MAX), last_tap(0L), char_idx(0), tap_interval(0)
-+    : TCA8418KeyboardBase(_TCA8418_ROWS, _TCA8418_COLS), modifierFlag(0), last_modifier_time(0), last_key(KEY_INDEX_INVALID),
++    : TCA8418KeyboardBase(_TCA8418_ROWS, _TCA8418_COLS), last_modifier_time(0), last_key(KEY_INDEX_INVALID),
 +      next_key(KEY_INDEX_INVALID), release_key(KEY_INDEX_INVALID), last_tap(0L)
  {
  #if ESP_ARDUINO_VERSION >= ESP_ARDUINO_VERSION_VAL(3, 0, 0)
      ledcAttach(KB_BL_PIN, LEDC_BACKLIGHT_FREQ, LEDC_BACKLIGHT_BIT_WIDTH);
-@@ -85,19 +91,72 @@ void TLoraPagerKeyboard::reset(void)
+@@ -85,20 +91,93 @@ void TLoraPagerKeyboard::reset(void)
      setBacklight(false);
  }
  
@@ -124,13 +124,26 @@ index 3b7e45d18..10e07c467 100644
 +}
 +
 +// Which column of the tap map the current modifier state selects.
-+// modifierFlag is a bitmask, so it cannot be used as an index directly:
++// The effective modifier is the sticky latch OR whatever is physically held, so
++// both tap-then-type and hold-and-type produce the same character.
++//
++// It is a bitmask, so it cannot be used as an index directly:
 +// shift|sym == 0b11 would wrap back to the unmodified column.
++uint8_t TLoraPagerKeyboard::modifierBit(uint8_t key)
++{
++    if (key == modifierRightShiftKey)
++        return modifierRightShift;
++    if (key == modifierSymKey)
++        return modifierSym;
++    return 0;
++}
++
 +uint8_t TLoraPagerKeyboard::modifierIndex() const
 +{
-+    if (modifierFlag & modifierSym)
++    const uint8_t active = (uint8_t)(modifierFlag | modifierHeld);
++    if (active & modifierSym)
 +        return tapColumnSym;
-+    if (modifierFlag & modifierRightShift)
++    if (active & modifierRightShift)
 +        return tapColumnShift;
 +    return tapColumnBase;
 +}
@@ -168,14 +181,23 @@ index 3b7e45d18..10e07c467 100644
 +                pressed(key);
          } else {
 -            released();
-+            if (state == Held) {
-+                release_key = keyIndex(key);
-+                released();
+-            state = Idle;
++            const uint8_t idx = keyIndex(key);
++            if (idx != KEY_INDEX_INVALID && isModifierKey(idx)) {
++                // A modifier never entered Held, so it has no state to give
++                // back; just drop its physical-held bit.
++                modifierHeld &= (uint8_t)~modifierBit(idx);
++            } else {
++                if (state == Held) {
++                    release_key = idx;
++                    released();
++                }
++                state = Idle;
 +            }
-             state = Idle;
          }
      }
-@@ -125,40 +184,25 @@ void TLoraPagerKeyboard::pressed(uint8_t key)
+ }
+@@ -125,39 +204,34 @@ void TLoraPagerKeyboard::pressed(uint8_t key)
          hapticFeedback();
      }
  
@@ -194,33 +216,46 @@ index 3b7e45d18..10e07c467 100644
      }
  
 -    next_key = row * _TCA8418_COLS + col;
-+    next_key = idx;
-     state = Held;
- 
-     uint32_t now = millis();
+-    state = Held;
+-
+-    uint32_t now = millis();
 -    tap_interval = now - last_tap;
- 
-     updateModifierFlag(next_key);
-     if (isModifierKey(next_key)) {
+-
+-    updateModifierFlag(next_key);
+-    if (isModifierKey(next_key)) {
++    const uint32_t now = millis();
++
++    // A modifier latches a flag and must NOT take the Held state.
++    //
++    // trigger() only dispatches a press while state == Idle, so a modifier
++    // parked in Held swallows the very next keypress: holding shift and typing a
++    // letter -- the way every other keyboard in the world works -- produced
++    // nothing at all, and the only route to a capital was to tap shift, release
++    // it, and then type. Tracking the physical hold separately from the sticky
++    // latch makes both styles work.
++    if (isModifierKey(idx)) {
++        modifierHeld |= modifierBit(idx);
++        updateModifierFlag(idx);
          last_modifier_time = now;
-     }
- 
+-    }
+-
 -    if (tap_interval < 0) {
 -        last_tap = 0;
 -        state = Busy;
--        return;
--    }
--
+         return;
+     }
+ 
 -    if (next_key != last_key || tap_interval > _TCA8418_MULTI_TAP_THRESHOLD) {
 -        char_idx = 0;
 -    } else {
 -        char_idx += 1;
 -    }
--
++    next_key = idx;
++    state = Held;
+ 
      last_key = next_key;
      last_tap = now;
- }
-@@ -169,22 +213,32 @@ void TLoraPagerKeyboard::released()
+@@ -169,22 +243,32 @@ void TLoraPagerKeyboard::released()
          return;
      }
  
@@ -260,7 +295,7 @@ index 3b7e45d18..10e07c467 100644
          modifierFlag = 0;
  }
  
-@@ -228,4 +282,4 @@ bool TLoraPagerKeyboard::isModifierKey(uint8_t key)
+@@ -228,4 +312,4 @@ bool TLoraPagerKeyboard::isModifierKey(uint8_t key)
      return (key == modifierRightShiftKey || key == modifierSymKey);
  }
  
@@ -268,10 +303,10 @@ index 3b7e45d18..10e07c467 100644
 \ No newline at end of file
 +#endif
 diff --git a/src/input/TLoraPagerKeyboard.h b/src/input/TLoraPagerKeyboard.h
-index 06a4c7b63..2a6ea6c8b 100644
+index 06a4c7b63..a3698fa6e 100644
 --- a/src/input/TLoraPagerKeyboard.h
 +++ b/src/input/TLoraPagerKeyboard.h
-@@ -18,13 +18,17 @@ class TLoraPagerKeyboard : public TCA8418KeyboardBase
+@@ -18,13 +18,19 @@ class TLoraPagerKeyboard : public TCA8418KeyboardBase
      bool isModifierKey(uint8_t key);
      void toggleBacklight(bool off = false);
  
@@ -279,9 +314,12 @@ index 06a4c7b63..2a6ea6c8b 100644
 +
 +    uint8_t keyIndex(uint8_t key) const;
 +    uint8_t modifierIndex() const;
++    static uint8_t modifierBit(uint8_t key);
 +
    private:
-     uint8_t modifierFlag;        // Flag to indicate if a modifier key is pressed
+-    uint8_t modifierFlag;        // Flag to indicate if a modifier key is pressed
++    uint8_t modifierFlag = 0; // Sticky latch: set by a tap, cleared by the next character
++    uint8_t modifierHeld = 0; // Physically down right now, so hold-to-shift works
      uint32_t last_modifier_time; // Timestamp of the last modifier key press
 -    uint8_t last_key;
 +    uint8_t last_key;            // Key index currently held, or KEY_INDEX_INVALID
