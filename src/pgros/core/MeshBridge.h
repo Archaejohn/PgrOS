@@ -145,6 +145,38 @@ class MeshBridge
     // enough that the snapshot is not a meaningful slice of internal RAM.
     static constexpr size_t kNodeSnapshotMax = 48;
 
+    // --- node settings ----------------------------------------------------
+    //
+    // The small, curated set of Meshtastic node config PgrOS edits on-device.
+    // The phone app remains the better place for the rest; this is for when you
+    // are out with no phone. Enum vocabularies come from MeshSettingsTable.h,
+    // generated from the vendored protobufs so they cannot drift from upstream.
+    //
+    // MESH TASK ONLY -- these write `owner` and `config` and call into
+    // MeshService, none of which is safe from the UI task.
+
+    enum class NodeField : uint8_t {
+        LongName = 0,
+        ShortName,
+        Role,
+        Region,
+        ModemPreset,
+        HopLimit,
+        BtPairing,
+        Count
+    };
+
+    // Applies one setting and persists it. Returns true if the change needs a
+    // reboot before it takes effect -- radio and Bluetooth settings do, because
+    // the stacks are configured once at startup.
+    bool applyNodeConfig(NodeField f, int32_t value, const char *text);
+
+    // Current value, for the UI to render and step from.
+    int32_t nodeConfigValue(NodeField f) const;
+
+    // Current text, for the two name fields. Always NUL-terminates.
+    void nodeConfigText(NodeField f, char *out, size_t outLen) const;
+
     // --- read receipts ----------------------------------------------------
     //
     // PgrOS-private, sent on PortNum PRIVATE_APP so any node that does not speak

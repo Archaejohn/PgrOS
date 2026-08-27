@@ -571,6 +571,158 @@ class PgrosPowerObserver : public Observer<const meshtastic::Status *>
 static PgrosGpsObserver *gGpsObserver = nullptr;
 static PgrosPowerObserver *gPowerObserver = nullptr;
 
+// ---------------------------------------------------------------------------
+// Node settings
+//
+// Mirrors what AdminModule does for the same fields, so a change made here is
+// indistinguishable from one made by the phone app:
+//
+//   names   -> owner, then service->reloadOwner() (which broadcasts a NodeInfo
+//              and saves DEVICESTATE + NODEDATABASE)
+//   config  -> config.*, then service->reloadConfig(SEGMENT_CONFIG)
+//
+// Radio and Bluetooth settings additionally need a restart: the LoRa interface
+// and the BLE stack are configured once during setup() and are not re-read.
+// applyNodeConfig() reports that rather than scheduling the reboot itself, so
+// the UI can tell the user before anything happens.
+// ---------------------------------------------------------------------------
+
+bool MeshBridge::applyNodeConfig(NodeField f, int32_t value, const char *text)
+{
+    bool needsReboot = false;
+
+    switch (f) {
+
+    case NodeField::LongName: {
+        if (!text || !text[0])
+            return false;
+        char buf[sizeof(owner.long_name)];
+        copyField(buf, sizeof(buf), text, sizeof(buf) - 1);
+        if (strcmp(owner.long_name, buf) == 0)
+            return false;
+        strncpy(owner.long_name, buf, sizeof(owner.long_name));
+        owner.long_name[sizeof(owner.long_name) - 1] = '\0';
+        if (service)
+            service->reloadOwner(true);
+        LOG_INFO("PgrOS: node name -> \"%s\"", owner.long_name);
+        break;
+    }
+
+    case NodeField::ShortName: {
+        if (!text || !text[0])
+            return false;
+        char buf[sizeof(owner.short_name)];
+        copyField(buf, sizeof(buf), text, sizeof(buf) - 1);
+        if (strcmp(owner.short_name, buf) == 0)
+            return false;
+        strncpy(owner.short_name, buf, sizeof(owner.short_name));
+        owner.short_name[sizeof(owner.short_name) - 1] = '\0';
+        if (service)
+            service->reloadOwner(true);
+        LOG_INFO("PgrOS: short name -> \"%s\"", owner.short_name);
+        break;
+    }
+
+    case NodeField::Role:
+        if (config.device.role == (meshtastic_Config_DeviceConfig_Role)value)
+            return false;
+        config.device.role = (meshtastic_Config_DeviceConfig_Role)value;
+        if (service)
+            service->reloadConfig(SEGMENT_CONFIG);
+        LOG_INFO("PgrOS: role -> %d", (int)value);
+        break;
+
+    case NodeField::Region:
+        if (config.lora.region == (meshtastic_Config_LoRaConfig_RegionCode)value)
+            return false;
+        config.lora.region = (meshtastic_Config_LoRaConfig_RegionCode)value;
+        if (service)
+            service->reloadConfig(SEGMENT_CONFIG);
+        // The region sets the frequency plan and the duty-cycle rules; the radio
+        // reads it once at init.
+        needsReboot = true;
+        LOG_INFO("PgrOS: region -> %d (reboot required)", (int)value);
+        break;
+
+    case NodeField::ModemPreset:
+        if (config.lora.use_preset && config.lora.modem_preset == (meshtastic_Config_LoRaConfig_ModemPreset)value)
+            return false;
+        config.lora.modem_preset = (meshtastic_Config_LoRaConfig_ModemPreset)value;
+        // Selecting a preset means using presets; otherwise the explicit
+        // bandwidth/spread/coding values would keep overriding it.
+        config.lora.use_preset = true;
+        if (service)
+            service->reloadConfig(SEGMENT_CONFIG);
+        needsReboot = true;
+        LOG_INFO("PgrOS: modem preset -> %d (reboot required)", (int)value);
+        break;
+
+    case NodeField::HopLimit: {
+        // Meshtastic caps this; a larger value would be silently clamped later
+        // and the UI would show a number the mesh is not using.
+        const int32_t clamped = value < 1 ? 1 : (value > 7 ? 7 : value);
+        if ((int32_t)config.lora.hop_limit == clamped)
+            return false;
+        config.lora.hop_limit = (uint8_t)clamped;
+        if (service)
+            service->reloadConfig(SEGMENT_CONFIG);
+        LOG_INFO("PgrOS: hop limit -> %d", (int)clamped);
+        break;
+    }
+
+    case NodeField::BtPairing:
+        if (config.bluetooth.mode == (meshtastic_Config_BluetoothConfig_PairingMode)value)
+            return false;
+        config.bluetooth.mode = (meshtastic_Config_BluetoothConfig_PairingMode)value;
+        if (service)
+            service->reloadConfig(SEGMENT_CONFIG);
+        // NimBLE reads the pairing mode when it starts, which already happened.
+        needsReboot = true;
+        LOG_INFO("PgrOS: BLE pairing mode -> %d (reboot required)", (int)value);
+        break;
+
+    default:
+        return false;
+    }
+
+    return needsReboot;
+}
+
+int32_t MeshBridge::nodeConfigValue(NodeField f) const
+{
+    switch (f) {
+    case NodeField::Role:
+        return (int32_t)config.device.role;
+    case NodeField::Region:
+        return (int32_t)config.lora.region;
+    case NodeField::ModemPreset:
+        return (int32_t)config.lora.modem_preset;
+    case NodeField::HopLimit:
+        return (int32_t)config.lora.hop_limit;
+    case NodeField::BtPairing:
+        return (int32_t)config.bluetooth.mode;
+    default:
+        return 0;
+    }
+}
+
+void MeshBridge::nodeConfigText(NodeField f, char *out, size_t outLen) const
+{
+    if (!out || !outLen)
+        return;
+    switch (f) {
+    case NodeField::LongName:
+        copyField(out, outLen, owner.long_name, sizeof(owner.long_name));
+        break;
+    case NodeField::ShortName:
+        copyField(out, outLen, owner.short_name, sizeof(owner.short_name));
+        break;
+    default:
+        out[0] = '\0';
+        break;
+    }
+}
+
 bool MeshBridge::begin()
 {
     if (gStarted)

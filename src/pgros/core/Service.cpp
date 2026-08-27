@@ -297,6 +297,14 @@ void Service::execute(const Intent &in)
         portal.stop();
         break;
 
+    case IntentType::ApplyNodeConfig: {
+        const bool needsReboot =
+            mesh.applyNodeConfig((MeshBridge::NodeField)in.node.field, in.node.value, in.node.text);
+        if (needsReboot)
+            postNotification("Restart required to apply", 1);
+        break;
+    }
+
     case IntentType::SavePolicy:
         policy.save();
         break;
@@ -410,6 +418,21 @@ bool Service::portalStop()
 {
     Intent in;
     in.type = IntentType::PortalStop;
+    return post(in);
+}
+
+bool Service::applyNodeConfig(uint8_t field, int32_t value, const char *text)
+{
+    Intent in;
+    in.type = IntentType::ApplyNodeConfig;
+    in.node.field = field;
+    in.node.value = value;
+    if (text) {
+        strncpy(in.node.text, text, sizeof(in.node.text) - 1);
+        in.node.text[sizeof(in.node.text) - 1] = 0;
+    } else {
+        in.node.text[0] = 0;
+    }
     return post(in);
 }
 

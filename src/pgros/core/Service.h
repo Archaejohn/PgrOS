@@ -41,6 +41,7 @@ enum class IntentType : uint8_t {
     WifiForget,    // wifi.ssid, or empty for all
     PortalStart,
     PortalStop,
+    ApplyNodeConfig, // node.* -- one Meshtastic node setting
     SavePolicy,    // flush the debounced policy to flash
     CompactStore,  // housekeeping; runs off the UI task
     Reboot,
@@ -69,6 +70,12 @@ struct Intent {
             uint16_t len;
             char body[kMaxTextLen + 1];
         } text;
+
+        struct {
+            uint8_t field;  // MeshBridge::NodeField
+            int32_t value;
+            char text[40];
+        } node;
 
         uint8_t raw[300];
     };
@@ -100,6 +107,7 @@ class Service
     bool wifiForget(const char *ssid);
     bool portalStart();
     bool portalStop();
+    bool applyNodeConfig(uint8_t field, int32_t value, const char *text);
     bool savePolicy();
     bool reboot();
 

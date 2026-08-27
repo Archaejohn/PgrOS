@@ -13,6 +13,7 @@
 #include "hal/Silence.h"
 #include "ui/Shell.h"
 #include "ui/Theme.h"
+#include "ui/apps/MeshSettingsTable.h"
 
 #include <lvgl.h>
 #include <stdio.h>
@@ -38,11 +39,25 @@ enum class Kind : uint8_t {
     Choice,  // small enum, stepped
     Number,  // integer with min/max/step
     Info,    // read-only value
+    Text,    // free text, opens the entry pane
     Action,  // does something on enter
 };
 
 enum class Id : uint8_t {
     None = 0,
+
+    // Meshtastic node config. Everything else in this table is PgrOS policy;
+    // these seven write through to the mesh stack and are visible to the phone
+    // app like any other config change.
+    NodeLongName,
+    NodeShortName,
+    NodeRole,
+    NodeRegion,
+    NodePreset,
+    NodeHopLimit,
+    NodeBtPairing,
+    NodeRestart,
+
     BootChime,
     KeyClick,
     KeyHaptic,
@@ -76,6 +91,16 @@ struct RowDesc {
 };
 
 static const RowDesc kTable[] = {
+    {Kind::Section, Id::None, "Node", 0, 0, 0},
+    {Kind::Text, Id::NodeLongName, "Name", 0, 0, 0},
+    {Kind::Text, Id::NodeShortName, "Short name", 0, 0, 0},
+    {Kind::Choice, Id::NodeRole, "Role", 0, 0, 0},
+    {Kind::Choice, Id::NodeRegion, "Region", 0, 0, 0},
+    {Kind::Choice, Id::NodePreset, "LoRa preset", 0, 0, 0},
+    {Kind::Number, Id::NodeHopLimit, "Hop limit", 1, 7, 1},
+    {Kind::Choice, Id::NodeBtPairing, "Bluetooth pairing", 0, 0, 0},
+    {Kind::Action, Id::NodeRestart, "Restart now", 0, 0, 0},
+
     {Kind::Section, Id::None, "Sound & haptics", 0, 0, 0},
     {Kind::Toggle, Id::BootChime, "Startup sound", 0, 0, 0},
     {Kind::Toggle, Id::KeyClick, "Key click", 0, 0, 0},
@@ -121,6 +146,35 @@ static const uint16_t kSleeps[] = {0, 60, 300, 900, 1800};
 static const char *kSleepNames[] = {"Never", "1m", "5m", "15m", "30m"};
 static const char *kThemeNames[] = {"Dark", "Light", "Auto"};
 
+// Enum pickers are driven by the generated tables. Values are not always dense
+// or contiguous -- deprecated entries leave gaps -- so stepping walks the table
+// rather than doing arithmetic on the value.
+static const char *enumLabel(const MeshEnumValue *tbl, uint8_t n, int32_t value)
+{
+    for (uint8_t i = 0; i < n; ++i)
+        if (tbl[i].value == value)
+            return tbl[i].label;
+    return "?";
+}
+
+static int32_t enumStep(const MeshEnumValue *tbl, uint8_t n, int32_t value, int8_t dir)
+{
+    if (!n)
+        return value;
+    uint8_t idx = 0;
+    for (uint8_t i = 0; i < n; ++i)
+        if (tbl[i].value == value) {
+            idx = i;
+            break;
+        }
+    const int next = (int)idx + (dir > 0 ? 1 : -1);
+    if (next < 0)
+        return tbl[n - 1].value;
+    if (next >= (int)n)
+        return tbl[0].value;
+    return tbl[next].value;
+}
+
 template <typename T, size_t N> static uint8_t indexOf(const T (&arr)[N], T value)
 {
     for (uint8_t i = 0; i < N; ++i)
@@ -161,6 +215,7 @@ void SettingsApp::onCreate(lv_obj_t *parent)
     lv_obj_move_foreground(mHint);
 
     buildConfirm(mRoot);
+    buildTextPane(mRoot);
 }
 
 void SettingsApp::buildList(lv_obj_t *parent)
@@ -269,6 +324,43 @@ void SettingsApp::refreshRow(uint8_t i)
     char buf[48];
 
     switch (d.id) {
+    // --- node config -----------------------------------------------------
+    // `owner` and `config` are plain global structs, not reallocating
+    // containers, so reading them from the UI task is safe in a way that
+    // NodeDB::meshNodes is not. Writes still go through the service task.
+    case Id::NodeLongName:
+    case Id::NodeShortName: {
+        char name[40];
+        mesh.nodeConfigText(d.id == Id::NodeLongName ? MeshBridge::NodeField::LongName
+                                                     : MeshBridge::NodeField::ShortName,
+                            name, sizeof(name));
+        lv_label_set_text(mRows[i].value, name[0] ? name : "unset");
+        break;
+    }
+    case Id::NodeRole:
+        lv_label_set_text(mRows[i].value,
+                          enumLabel(kRoleValues, kRoleValuesCount, mesh.nodeConfigValue(MeshBridge::NodeField::Role)));
+        break;
+    case Id::NodeRegion:
+        lv_label_set_text(mRows[i].value, enumLabel(kRegionValues, kRegionValuesCount,
+                                                    mesh.nodeConfigValue(MeshBridge::NodeField::Region)));
+        break;
+    case Id::NodePreset:
+        lv_label_set_text(mRows[i].value, enumLabel(kPresetValues, kPresetValuesCount,
+                                                    mesh.nodeConfigValue(MeshBridge::NodeField::ModemPreset)));
+        break;
+    case Id::NodeHopLimit:
+        snprintf(buf, sizeof(buf), "%d", (int)mesh.nodeConfigValue(MeshBridge::NodeField::HopLimit));
+        lv_label_set_text(mRows[i].value, buf);
+        break;
+    case Id::NodeBtPairing:
+        lv_label_set_text(mRows[i].value, enumLabel(kPairingValues, kPairingValuesCount,
+                                                    mesh.nodeConfigValue(MeshBridge::NodeField::BtPairing)));
+        break;
+    case Id::NodeRestart:
+        lv_label_set_text(mRows[i].value, LV_SYMBOL_POWER);
+        break;
+
     case Id::BootChime:
         lv_label_set_text(mRows[i].value, p.bootChime ? "On" : "Off");
         break;
@@ -459,6 +551,39 @@ bool SettingsApp::adjust(uint8_t i, int8_t dir)
     bool changed = true;
 
     switch (d.id) {
+
+    // Node config. These go through the service task -- they write `owner`
+    // and `config` and call into MeshService, none of which is safe here.
+    case Id::NodeRole: {
+        const int32_t v = enumStep(kRoleValues, kRoleValuesCount,
+                                   mesh.nodeConfigValue(MeshBridge::NodeField::Role), dir);
+        service_.applyNodeConfig((uint8_t)MeshBridge::NodeField::Role, v, nullptr);
+        return true;
+    }
+    case Id::NodeRegion: {
+        const int32_t v = enumStep(kRegionValues, kRegionValuesCount,
+                                   mesh.nodeConfigValue(MeshBridge::NodeField::Region), dir);
+        service_.applyNodeConfig((uint8_t)MeshBridge::NodeField::Region, v, nullptr);
+        return true;
+    }
+    case Id::NodePreset: {
+        const int32_t v = enumStep(kPresetValues, kPresetValuesCount,
+                                   mesh.nodeConfigValue(MeshBridge::NodeField::ModemPreset), dir);
+        service_.applyNodeConfig((uint8_t)MeshBridge::NodeField::ModemPreset, v, nullptr);
+        return true;
+    }
+    case Id::NodeBtPairing: {
+        const int32_t v = enumStep(kPairingValues, kPairingValuesCount,
+                                   mesh.nodeConfigValue(MeshBridge::NodeField::BtPairing), dir);
+        service_.applyNodeConfig((uint8_t)MeshBridge::NodeField::BtPairing, v, nullptr);
+        return true;
+    }
+    case Id::NodeHopLimit: {
+        const int32_t v = clampStep((int16_t)mesh.nodeConfigValue(MeshBridge::NodeField::HopLimit), dir, d);
+        service_.applyNodeConfig((uint8_t)MeshBridge::NodeField::HopLimit, v, nullptr);
+        return true;
+    }
+
     case Id::BootChime:
         p.bootChime = !p.bootChime;
         break;
@@ -549,6 +674,12 @@ bool SettingsApp::activate(uint8_t i)
     if (i >= mRowCount)
         return false;
 
+    if (kTable[i].id == Id::NodeRestart) {
+        shell.toast("Restarting");
+        service_.reboot();
+        return true;
+    }
+
     if (kTable[i].id == Id::ResetDefaults) {
         mConfirmChoice = 0;
         showConfirm(true);
@@ -556,6 +687,11 @@ bool SettingsApp::activate(uint8_t i)
     }
 
     switch (kTable[i].kind) {
+    case Kind::Text:
+        // Free text needs its own pane: the rotary cannot enter a name.
+        openTextEditor(i);
+        return true;
+
     case Kind::Toggle:
         // Two states: pressing is unambiguous, so act at once rather than
         // making the user enter and leave an edit mode to flip a boolean.
@@ -572,6 +708,116 @@ bool SettingsApp::activate(uint8_t i)
     default:
         return false; // Info rows and section headers do nothing
     }
+}
+
+// ---------------------------------------------------------------------------
+// Text entry
+//
+// Append-and-backspace only. There is no caret movement because there are no
+// arrow keys on this board -- the rotary is the only continuous control and it
+// is already doing list navigation everywhere else. For a node name that is
+// enough; anything longer belongs in the phone app.
+// ---------------------------------------------------------------------------
+
+void SettingsApp::buildTextPane(lv_obj_t *parent)
+{
+    mTextPane = lv_obj_create(parent);
+    lv_obj_remove_style_all(mTextPane);
+    lv_obj_set_size(mTextPane, metrics::screenW, metrics::contentH);
+    lv_obj_set_style_bg_color(mTextPane, lv_color_hex(theme.colors().bg), 0);
+    lv_obj_set_style_bg_opa(mTextPane, LV_OPA_COVER, 0);
+    lv_obj_add_flag(mTextPane, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_remove_flag(mTextPane, LV_OBJ_FLAG_SCROLLABLE);
+
+    mTextTitle = lv_label_create(mTextPane);
+    lv_obj_set_style_text_font(mTextTitle, theme.fontBody(), 0);
+    lv_obj_set_style_text_color(mTextTitle, lv_color_hex(theme.colors().textDim), 0);
+    lv_obj_align(mTextTitle, LV_ALIGN_TOP_LEFT, metrics::padL, 18);
+
+    lv_obj_t *field = lv_obj_create(mTextPane);
+    lv_obj_remove_style_all(field);
+    theme.styleTextInput(field);
+    lv_obj_set_size(field, metrics::screenW - metrics::padL * 2, 38);
+    lv_obj_set_pos(field, metrics::padL, 52);
+    lv_obj_remove_flag(field, LV_OBJ_FLAG_SCROLLABLE);
+
+    mTextField = lv_label_create(field);
+    lv_obj_set_style_text_font(mTextField, theme.fontLarge(), 0);
+    lv_obj_set_style_text_color(mTextField, lv_color_hex(theme.colors().text), 0);
+    lv_obj_align(mTextField, LV_ALIGN_LEFT_MID, metrics::padM, 0);
+    lv_label_set_text(mTextField, "");
+
+    mTextHint = lv_label_create(mTextPane);
+    lv_obj_set_style_text_font(mTextHint, theme.fontSmall(), 0);
+    lv_obj_set_style_text_color(mTextHint, lv_color_hex(theme.colors().textFaint), 0);
+    lv_obj_align(mTextHint, LV_ALIGN_BOTTOM_LEFT, metrics::padL, -6);
+}
+
+void SettingsApp::openTextEditor(uint8_t index)
+{
+    if (index >= mRowCount)
+        return;
+
+    mTextRow = index;
+    const Id id = kTable[index].id;
+
+    // The short name is what every other node shows in a channel bubble, so its
+    // four-character limit is the wire format's, not a UI choice.
+    mTextMax = (id == Id::NodeShortName) ? 4 : 24;
+
+    char cur[40];
+    mesh.nodeConfigText(id == Id::NodeShortName ? MeshBridge::NodeField::ShortName : MeshBridge::NodeField::LongName,
+                        cur, sizeof(cur));
+    strncpy(mTextBuf, cur, sizeof(mTextBuf) - 1);
+    mTextBuf[sizeof(mTextBuf) - 1] = '\0';
+    mTextLen = (uint8_t)strnlen(mTextBuf, mTextMax);
+    mTextBuf[mTextLen] = '\0';
+
+    char title[48];
+    snprintf(title, sizeof(title), "%s", kTable[index].label);
+    lv_label_set_text(mTextTitle, title);
+
+    mTextVisible = true;
+    lv_obj_remove_flag(mTextPane, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(mTextPane);
+    refreshTextPane();
+}
+
+void SettingsApp::refreshTextPane()
+{
+    lv_label_set_text(mTextField, mTextBuf[0] ? mTextBuf : " ");
+
+    char hint[80];
+    snprintf(hint, sizeof(hint), "%u/%u   Enter to save   Back to cancel", (unsigned)mTextLen, (unsigned)mTextMax);
+    lv_label_set_text(mTextHint, hint);
+
+    // Turn the counter amber once there is no room left, so hitting the limit is
+    // visible rather than just silently ignoring keys.
+    lv_obj_set_style_text_color(mTextHint,
+                                lv_color_hex(mTextLen >= mTextMax ? theme.colors().warn : theme.colors().textFaint), 0);
+}
+
+void SettingsApp::closeTextEditor(bool commit)
+{
+    if (!mTextVisible)
+        return;
+    mTextVisible = false;
+    lv_obj_add_flag(mTextPane, LV_OBJ_FLAG_HIDDEN);
+
+    if (commit && mTextLen) {
+        const Id id = kTable[mTextRow].id;
+        const auto field =
+            (id == Id::NodeShortName) ? MeshBridge::NodeField::ShortName : MeshBridge::NodeField::LongName;
+        // Writes owner and broadcasts a NodeInfo, so it has to happen on the
+        // mesh task.
+        service_.applyNodeConfig((uint8_t)field, 0, mTextBuf);
+        shell.toast("Saved");
+    }
+
+    // The value shown in the list is read back from `owner`, which the service
+    // task has not necessarily updated yet; refresh again on the next tick.
+    refreshRow(mTextRow);
+    applySelection(false);
 }
 
 void SettingsApp::showConfirm(bool show)
@@ -634,6 +880,7 @@ void SettingsApp::onShow(const AppArgs &args)
     snprintf(mNodeLine, sizeof(mNodeLine), "%s  !%08x", me.shortName, (unsigned)me.num);
 
     mEditing = false;
+    closeTextEditor(false);
     showConfirm(false);
     refreshAll();
 }
@@ -657,6 +904,37 @@ void SettingsApp::onTick()
 
 bool SettingsApp::onKey(uint32_t k)
 {
+    // Text entry is modal and swallows everything, including Back, which
+    // cancels rather than leaving the screen with a half-typed name.
+    if (mTextVisible) {
+        if (key::isPrintable(k)) {
+            if (mTextLen < mTextMax) {
+                mTextBuf[mTextLen++] = (char)k;
+                mTextBuf[mTextLen] = 0;
+            }
+            refreshTextPane();
+            return true;
+        }
+        switch (k) {
+        case key::Backspace:
+            if (mTextLen) {
+                mTextBuf[--mTextLen] = 0;
+                refreshTextPane();
+            }
+            return true;
+        case key::Enter:
+        case key::Select:
+            closeTextEditor(true);
+            return true;
+        case key::Back:
+        case key::Cancel:
+            closeTextEditor(false);
+            return true;
+        default:
+            return true;
+        }
+    }
+
     if (mConfirmVisible) {
         switch (k) {
         case key::Left:

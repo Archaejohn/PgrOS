@@ -62,6 +62,11 @@ class SettingsApp : public App
 
     void buildList(lv_obj_t *parent);
     void buildConfirm(lv_obj_t *parent);
+    void buildTextPane(lv_obj_t *parent);
+
+    void openTextEditor(uint8_t index);
+    void closeTextEditor(bool commit);
+    void refreshTextPane();
 
     void refreshRow(uint8_t index);
     void refreshAll();
@@ -91,6 +96,19 @@ class SettingsApp : public App
     // and Select. So a row is entered for editing, and the rotary then changes
     // the value instead of moving the selection. See onKey().
     bool mEditing = false;
+
+    // Text-entry pane, used by the two node-name fields. The pager has no arrow
+    // keys, so this is a simple append/backspace buffer rather than a caret
+    // editor.
+    lv_obj_t *mTextPane = nullptr;
+    lv_obj_t *mTextTitle = nullptr;
+    lv_obj_t *mTextField = nullptr;
+    lv_obj_t *mTextHint = nullptr;
+    bool mTextVisible = false;
+    uint8_t mTextRow = 0;      // which table row is being edited
+    uint8_t mTextMax = 0;      // field length limit, excluding the NUL
+    char mTextBuf[40] = {0};
+    uint8_t mTextLen = 0;
     lv_obj_t *mHint = nullptr;
 
     bool mConfirmVisible = false;
