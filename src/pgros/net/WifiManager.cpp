@@ -540,6 +540,18 @@ bool WifiManager::join(const char *ssid, const char *passphrase, uint32_t timeou
     char cleanPsk[kMaxPassphrase];
     copyCStr(cleanPsk, sizeof(cleanPsk), passphrase);
 
+    // An empty passphrase means "join with whatever we already hold". The UI
+    // sends exactly that for a network the scan list marks as saved, and until
+    // this lookup existed the empty string fell through to the WiFi.begin()
+    // below as a null password -- an OPEN association attempt against a WPA
+    // network, which every access point refuses. Rejoining a saved network
+    // could therefore never work; it looked like the password had been stored
+    // wrongly, when it was stored fine and simply never read back.
+    const int storedIdx = cleanPsk[0] ? -1 : findSaved(cleanSsid);
+    const bool fromStore = storedIdx >= 0;
+    if (fromStore)
+        copyCStr(cleanPsk, sizeof(cleanPsk), sSaved[storedIdx].passphrase);
+
     if (coex.mode() != CoexMode::WifiStation) {
         const CoexResult r = coex.request(CoexMode::WifiStation, CoexReason::UserRequest);
         if (r == CoexResult::RebootScheduled) {
@@ -577,9 +589,14 @@ bool WifiManager::join(const char *ssid, const char *passphrase, uint32_t timeou
     }
 
     if (WiFi.status() != WL_CONNECTED) {
-        LOG_WARN("WiFi: join \"%s\" timed out/failed (reason %u)", cleanSsid, (unsigned)getWifiDisconnectReason());
+        LOG_WARN("WiFi: join \"%s\" timed out/failed (reason %u)%s", cleanSsid, (unsigned)getWifiDisconnectReason(),
+                 fromStore ? " using saved credentials" : "");
         WiFi.disconnect(false, true);
-        postWifi(WifiState::Failed);
+        // Tell the UI which kind of failure this was. A stored password that the
+        // access point rejects is the one case the user cannot fix by retrying --
+        // they have to forget the network and type it again -- so it gets its own
+        // state rather than the generic one.
+        postWifi(fromStore ? WifiState::FailedSaved : WifiState::Failed);
         return false;
     }
 

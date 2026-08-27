@@ -248,7 +248,9 @@
         bar.style.width = Math.round(done * 100 / (done + files.length)) + '%';
         next();
       });
-    
+    })();
+  });
+
   /* ── Track ────────────────────────────────────────── */
 
   function loadTrack() {
@@ -562,7 +564,5 @@
   $('trackClear').addEventListener('click', function () {
     if (!confirm('Delete the recorded track?')) return;
     fetch('/api/track', { method: 'DELETE' }).then(loadTrack);
-  });
-})();
   });
 })();

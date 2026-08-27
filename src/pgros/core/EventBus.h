@@ -63,7 +63,10 @@ enum class Subsys : uint8_t { Fs = 0, NodeDb, Radio, Gps, Ble, Wifi, Store, Coun
 // header stays free of net/ dependencies.
 enum class RadioMode : uint8_t { Off = 0, Bluetooth, WifiStation, WifiAp };
 
-enum class WifiState : uint8_t { Idle = 0, Scanning, Connecting, Connected, ApRunning, Failed };
+// FailedSaved is kept distinct from Failed on purpose: it is the one failure a
+// retry cannot fix. The stored password is wrong, so the user has to forget the
+// network and type it again, and the UI has to say so.
+enum class WifiState : uint8_t { Idle = 0, Scanning, Connecting, Connected, ApRunning, Failed, FailedSaved };
 
 // Plain thread reference. Deliberately not store::ThreadId -- this must stay a
 // trivially-copyable POD so it can live inside the event union.

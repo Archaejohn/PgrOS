@@ -764,6 +764,13 @@ bool NetworkApp::onEvent(const Event &ev)
 
     case EventType::WifiState:
         shell.hideBusy();
+        // A rejected stored password is a dead end the user has to act on -- say
+        // so, and point at the fix, rather than reporting a bare failure they
+        // would reasonably respond to by trying again.
+        if ((WifiState)ev.wifi.state == WifiState::FailedSaved)
+            shell.toast("Saved password rejected - forget and retype");
+        else if ((WifiState)ev.wifi.state == WifiState::Failed)
+            shell.toast("Could not join");
         if (mPane == Pane::Modes)
             refreshModes();
         else if (mPane == Pane::Hotspot)
