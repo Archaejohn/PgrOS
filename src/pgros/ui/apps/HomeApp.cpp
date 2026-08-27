@@ -143,7 +143,9 @@ void HomeApp::onCreate(lv_obj_t *parent)
 
     applySelection(false);
     refreshClock(true);
+    buildMesh(mRoot);
     refreshSummary();
+    refreshMesh();
 }
 
 void HomeApp::buildTiles(lv_obj_t *parent)
@@ -222,6 +224,7 @@ void HomeApp::onShow(const AppArgs &args)
     applySelection(false);
     refreshClock(true);
     refreshSummary();
+    refreshMesh();
 }
 
 bool HomeApp::onEvent(const Event &ev)
@@ -314,6 +317,11 @@ bool HomeApp::onKey(uint32_t k)
 void HomeApp::onTick()
 {
     refreshClock(false);
+
+    // Mesh coverage changes as you move, so it has to track the tick rather than
+    // waiting for an event. refreshMesh() returns immediately unless the reading
+    // actually changed, so this costs a comparison in the common case.
+    refreshMesh();
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +373,74 @@ void HomeApp::applySelection(bool animate)
 
     if (mTile[mSelected])
         lv_obj_scroll_to_view(mTile[mSelected], animate ? LV_ANIM_ON : LV_ANIM_OFF);
+}
+
+// ---------------------------------------------------------------------------
+// Mesh coverage
+//
+// The status bar already carries these bars, but at 22 px they are for glancing
+// at when you happen to look. Walking out of range is the one thing worth
+// noticing WITHOUT looking for it, so Home states it at size: four bars, and
+// words rather than a number, because "no mesh" reads faster than "0".
+// ---------------------------------------------------------------------------
+
+void HomeApp::buildMesh(lv_obj_t *parent)
+{
+    mMeshBox = lv_obj_create(parent);
+    lv_obj_remove_style_all(mMeshBox);
+    lv_obj_set_size(mMeshBox, 150, 26);
+    lv_obj_align(mMeshBox, LV_ALIGN_TOP_RIGHT, -metrics::padL, metrics::padM);
+    lv_obj_remove_flag(mMeshBox, LV_OBJ_FLAG_SCROLLABLE);
+
+    // Ascending bars, drawn as plain rectangles. A font glyph would be at the
+    // mercy of whatever Montserrat subset is compiled in.
+    for (uint8_t i = 0; i < 4; ++i) {
+        mMeshBar[i] = lv_obj_create(mMeshBox);
+        lv_obj_remove_style_all(mMeshBar[i]);
+        const int16_t h = (int16_t)(6 + i * 5);
+        lv_obj_set_size(mMeshBar[i], 5, h);
+        lv_obj_set_pos(mMeshBar[i], i * 8, (int16_t)(22 - h));
+        lv_obj_set_style_radius(mMeshBar[i], 1, 0);
+        lv_obj_set_style_bg_opa(mMeshBar[i], LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_color(mMeshBar[i], lv_color_hex(theme.colors().border), 0);
+    }
+
+    mMeshLabel = lv_label_create(mMeshBox);
+    lv_obj_set_style_text_font(mMeshLabel, theme.fontBody(), 0);
+    lv_obj_align(mMeshLabel, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_label_set_text(mMeshLabel, "");
+}
+
+void HomeApp::refreshMesh()
+{
+    if (!mMeshBox)
+        return;
+
+    const MeshBridge::MeshDensity d = mesh.density();
+
+    // Only touch LVGL when something actually changed; this runs on every tick.
+    if (d.bars == mMeshBars && d.directNeighbours == mMeshDirect)
+        return;
+    mMeshBars = d.bars;
+    mMeshDirect = d.directNeighbours;
+
+    const Color lit = theme.signalColor(d.bars);
+    for (uint8_t i = 0; i < 4; ++i)
+        lv_obj_set_style_bg_color(mMeshBar[i], lv_color_hex(i < d.bars ? lit : theme.colors().border), 0);
+
+    // Words, not a bare count. Zero neighbours is the state that matters and it
+    // should not have to be inferred from four grey bars.
+    char txt[24];
+    if (d.directNeighbours == 0)
+        snprintf(txt, sizeof(txt), "no mesh");
+    else if (d.directNeighbours == 1)
+        snprintf(txt, sizeof(txt), "1 near");
+    else
+        snprintf(txt, sizeof(txt), "%u near", (unsigned)d.directNeighbours);
+
+    lv_label_set_text(mMeshLabel, txt);
+    lv_obj_set_style_text_color(mMeshLabel,
+                                lv_color_hex(d.directNeighbours ? theme.colors().textDim : theme.colors().error), 0);
 }
 
 void HomeApp::refreshSummary()

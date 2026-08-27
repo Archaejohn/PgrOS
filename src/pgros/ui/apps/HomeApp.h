@@ -41,6 +41,8 @@ class HomeApp : public App
     void buildTiles(lv_obj_t *parent);
     void applySelection(bool animate);
     void refreshSummary();
+    void buildMesh(lv_obj_t *parent);
+    void refreshMesh();
     void refreshClock(bool force);
 
     static constexpr uint8_t kTileCount = 6;
@@ -50,6 +52,14 @@ class HomeApp : public App
     lv_obj_t *mClock = nullptr;
     lv_obj_t *mDate = nullptr;
     lv_obj_t *mSummary = nullptr;
+
+    // Mesh coverage, shown large because it is the thing you glance at while
+    // walking: four bars plus a plain-language state.
+    lv_obj_t *mMeshBox = nullptr;
+    lv_obj_t *mMeshBar[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t *mMeshLabel = nullptr;
+    uint8_t mMeshBars = 255;   // 255 = not yet drawn
+    uint8_t mMeshDirect = 0;
     lv_obj_t *mRow = nullptr;
     lv_obj_t *mTile[kTileCount] = {nullptr};
     lv_obj_t *mTileIcon[kTileCount] = {nullptr};

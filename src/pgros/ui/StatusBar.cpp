@@ -210,17 +210,13 @@ bool StatusBar::onEvent(const Event &ev)
         return true;
 
     case EventType::NodeUpdated:
-        // Weak proxy for link quality, see applySignal().
-        if (!ev.node.viaMqtt) {
-            const uint8_t hops = ev.node.hopsAway;
-            const uint8_t bars = hops >= 3 ? 1 : (uint8_t)(4 - hops);
-            if (!mHaveBars || bars != mBars) {
-                mHaveBars = true;
-                mBars = bars;
-                applySignal();
-                return true;
-            }
-        }
+        // Deliberately does NOT touch the bars any more. This used to derive
+        // them from the hop count of whichever node was heard last, which was a
+        // weak proxy and, worse, fought the real value: the Shell pushes
+        // mesh.density().bars in via setSignal() every 200 ms, so the indicator
+        // flickered between two different meanings depending on which ran last.
+        // Density wins -- it counts direct neighbours and relayed traffic rather
+        // than one node's hop count.
         return false;
 
     default:
@@ -313,12 +309,9 @@ void StatusBar::applySignal()
         return;
     const Palette &p = theme.colors();
 
-    // NOTE: nothing on the event bus carries RSSI or SNR yet, so bars are
-    // currently derived from the hop count of the last directly-heard node
-    // update -- a proxy for "how close is the mesh", not for link margin. When
-    // MeshBridge grows an event with the last packet's SNR, point setSignal()
-    // at it and delete the NodeUpdated branch in onEvent(); nothing else here
-    // needs to change.
+    // Bars are mesh DENSITY, not one link's margin: distinct nodes heard at zero
+    // hops, lifted a step by packet rate. The Shell pushes it in through
+    // setSignal() on its periodic tick. See MeshBridge::density().
     const uint8_t bars = mHaveBars ? mBars : 0;
     const Color on = theme.signalColor(bars);
 
