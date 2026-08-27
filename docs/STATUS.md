@@ -46,6 +46,11 @@ runtime allocation.
 | Node discovery (broadcast NodeInfo request) | Written, compiles |
 | Time zone from GPS, with manual override | Written, compiles |
 | Mesh density bars, counted from relayed traffic | Written, compiles |
+| GPS track recorder + GPX export carrying mesh coverage | Written, compiles |
+| Node settings on-device, enums generated from the protobufs | Written, compiles |
+| Node discovery (broadcast NodeInfo request) | Written, compiles |
+| Time zone from GPS, with manual override | Written, compiles |
+| Mesh density bars, counted from relayed traffic | Written, compiles |
 | GPS track recorder + GPX export with mesh coverage | Written, compiles |
 | Silence policy (amp mute, haptics, buzzer), silent by default | Written, compiles |
 | Crash / boot-loop capture | Written, compiles |
