@@ -419,10 +419,10 @@ void HomeApp::refreshMesh()
     const MeshBridge::MeshDensity d = mesh.density();
 
     // Only touch LVGL when something actually changed; this runs on every tick.
-    if (d.bars == mMeshBars && d.directNeighbours == mMeshDirect)
+    if (d.bars == mMeshBars && d.activeNeighbours == mMeshDirect)
         return;
     mMeshBars = d.bars;
-    mMeshDirect = d.directNeighbours;
+    mMeshDirect = d.activeNeighbours;
 
     const Color lit = theme.signalColor(d.bars);
     for (uint8_t i = 0; i < 4; ++i)
@@ -431,16 +431,16 @@ void HomeApp::refreshMesh()
     // Words, not a bare count. Zero neighbours is the state that matters and it
     // should not have to be inferred from four grey bars.
     char txt[24];
-    if (d.directNeighbours == 0)
+    if (d.activeNeighbours == 0)
         snprintf(txt, sizeof(txt), "no mesh");
-    else if (d.directNeighbours == 1)
+    else if (d.activeNeighbours == 1)
         snprintf(txt, sizeof(txt), "1 near");
     else
-        snprintf(txt, sizeof(txt), "%u near", (unsigned)d.directNeighbours);
+        snprintf(txt, sizeof(txt), "%u near", (unsigned)d.activeNeighbours);
 
     lv_label_set_text(mMeshLabel, txt);
     lv_obj_set_style_text_color(mMeshLabel,
-                                lv_color_hex(d.directNeighbours ? theme.colors().textDim : theme.colors().error), 0);
+                                lv_color_hex(d.activeNeighbours ? theme.colors().textDim : theme.colors().error), 0);
 }
 
 void HomeApp::refreshSummary()

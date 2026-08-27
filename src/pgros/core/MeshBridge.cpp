@@ -560,7 +560,7 @@ class PgrosGpsObserver : public Observer<const meshtastic::Status *>
             tp.altM = ev.gps.altM;
             tp.sats = ev.gps.sats;
             tp.bars = den.bars;
-            tp.directNeighbours = den.directNeighbours;
+            tp.directNeighbours = den.activeNeighbours;
             tp.packetsPerMin = (uint8_t)(den.packetsPerMin > 255 ? 255 : den.packetsPerMin);
             tp.bestRssi = den.bestRssi;
             tp.bestSnr = den.bestSnr;
@@ -723,91 +723,182 @@ bool MeshBridge::applyNodeConfig(NodeField f, int32_t value, const char *text)
 // ---------------------------------------------------------------------------
 // Mesh density
 //
-// The idea: signal bars, but for the mesh rather than for one link. A phone's
-// bars say "how well can I reach the tower"; the useful question here is "how
-// much mesh is around me", and the answer is mostly carried by traffic the user
-// never sees -- packets this node hears and relays on behalf of others.
+// Signal bars, but for the mesh rather than for one link. A phone's bars say
+// "how well can I reach the tower"; the useful question here is "how much mesh
+// is around me", and the answer is carried almost entirely by traffic the user
+// never sees -- packets this node overhears and relays on behalf of others.
 //
 // So the counter is a promiscuous module: isPromiscuous plus encryptedOk means
 // callModules() hands it every packet the radio decoded a header for, including
-// ones addressed to other people and ones on channels we hold no key for. That
-// silent relay traffic is the signal.
+// ones addressed to other people and ones on channels we hold no key for. The
+// header -- from, hop_start, hop_limit, relay_node -- is never encrypted, so a
+// packet we cannot read still tells us who is on the air and how far away they
+// are. That silent relay traffic IS the signal.
 //
-// Two inputs, deliberately:
+// Two inputs, both measured off the air over a rolling five minutes:
 //
-//   packets/min      how busy the air is around this node
-//   direct neighbours how many distinct nodes are in actual radio range
+//   packets/min        how busy the air is around this node
+//   activeNeighbours   distinct nodes transmitting within direct radio range
 //
-// Neighbours dominate the bar count, because five nodes you can reach directly
-// is a denser mesh than one chatty node three hops away. Airtime comes from
-// Meshtastic's own AirTime, which already measures exactly this.
+// Traffic leads. An earlier version led with the count of direct neighbours in
+// NodeDB, which was wrong twice over: NodeDB only learns a node exists once it
+// sends a decodable NodeInfo, and its 30-minute recency window made the bars a
+// near-static number that ignored everything happening on the air right now.
+// Relaying a packet is the clearest possible evidence the mesh is alive around
+// you, and it used to move the bars only through a >= 30 packets/min bonus that
+// a real mesh essentially never reaches.
+//
+// Five minutes is a deliberate compromise: long enough that the bars do not
+// flicker between two packets, short enough that walking out of coverage shows
+// up while you are still walking.
 // ---------------------------------------------------------------------------
 
 namespace
 {
-// Six ten-second buckets: one rolling minute, matching AirTime's own window.
-constexpr uint8_t kDensityBuckets = 6;
-constexpr uint32_t kDensityBucketMs = 10000;
+// Ten thirty-second buckets: a rolling five minutes that decays smoothly rather
+// than dropping a whole window of history at once.
+constexpr uint8_t kDensityBuckets = 10;
+constexpr uint32_t kDensityBucketMs = 30000;
+constexpr uint32_t kDensityWindowMs = kDensityBuckets * kDensityBucketMs;
 
-uint16_t gPktBucket[kDensityBuckets] = {0};
-uint8_t gPktBucketIdx = 0;
-uint32_t gPktBucketStartMs = 0;
+// Distinct near nodes are tracked as a bitmap over the low byte of the node
+// number, because that is all a relayed packet gives us: relay_node is defined
+// as the last byte of the relaying node number. Using the same 8-bit space for
+// directly-heard senders means a node that both originates and relays is
+// counted once, which is the answer we want. Collisions are possible -- two
+// nodes sharing a low byte read as one -- but at the scale that matters here
+// (single digits of neighbours) they are rare and only ever undercount.
+constexpr uint8_t kNearBytes = 32; // 256 bits
 
-void densityCountPacket()
-{
-    const uint32_t now = millis();
-    if (!gPktBucketStartMs)
-        gPktBucketStartMs = now;
+struct DensityBucket {
+    uint16_t packets;
+    uint8_t near[kNearBytes];
+};
 
-    // Advance, clearing everything we skipped so a quiet spell does not leave
-    // stale counts behind to be counted again.
-    while (now - gPktBucketStartMs >= kDensityBucketMs) {
-        gPktBucketStartMs += kDensityBucketMs;
-        gPktBucketIdx = (uint8_t)((gPktBucketIdx + 1) % kDensityBuckets);
-        gPktBucket[gPktBucketIdx] = 0;
-    }
-    if (gPktBucket[gPktBucketIdx] < 0xFFFF)
-        gPktBucket[gPktBucketIdx]++;
-}
+DensityBucket gBucket[kDensityBuckets];
+uint8_t gBucketIdx = 0;
+uint32_t gBucketStartMs = 0;
 
-// Strongest directly-heard packet in the current window.
+// Strongest directly-heard packet in the window.
 //
 // "Direct" means zero hops travelled. A relayed packet carries the RSSI of the
-// hop that reached us, which describes the relay's radio and not our distance
-// from the originator -- counting it would make a far-off mesh look close, which
-// is exactly the wrong answer when the question is "am I still in coverage".
+// hop that reached us, which describes the radio of the relay and not our
+// distance from the originator -- counting it would make a far-off mesh look
+// close, which is exactly the wrong answer when the question is whether we are
+// still in coverage.
 int8_t gBestRssi = 0;
 int8_t gBestSnr = 0;
 bool gHeardDirect = false;
 uint32_t gBestAtMs = 0;
+uint32_t gLastPacketMs = 0;
 
-void densityNoteDirect(int8_t rssi, int8_t snr)
+inline void nearSet(DensityBucket &b, uint8_t id)
 {
-    const uint32_t now = millis();
+    b.near[id >> 3] |= (uint8_t)(1u << (id & 7));
+}
 
-    // Decay. A reading older than the packet window is history, not coverage;
-    // without this the last node you heard before walking out of range would
-    // keep reporting a healthy signal indefinitely.
-    if (gHeardDirect && (now - gBestAtMs) > (kDensityBuckets * kDensityBucketMs)) {
+// Roll the window forward to now, clearing every bucket we passed over.
+//
+// This has to run on a timer and not only when a packet arrives. The previous
+// version advanced from the receive path alone, so a node that stopped hearing
+// anything -- exactly the case the bars exist to show -- kept reporting its last
+// count forever, because there were no packets left to trigger the advance.
+//
+// MESH TASK ONLY. Called from ServiceThread::runOnce(), the same task that runs
+// the module callbacks, so a reader never sees a half-advanced window.
+void densityAdvance(uint32_t now)
+{
+    if (!gBucketStartMs) {
+        gBucketStartMs = now;
+        return;
+    }
+
+    while (now - gBucketStartMs >= kDensityBucketMs) {
+        gBucketStartMs += kDensityBucketMs;
+        gBucketIdx = (uint8_t)((gBucketIdx + 1) % kDensityBuckets);
+        gBucket[gBucketIdx] = DensityBucket{};
+    }
+
+    // The best-signal reading decays on the same clock. Without this the last
+    // node you heard before walking out of range reports a healthy link
+    // indefinitely.
+    if (gHeardDirect && (now - gBestAtMs) > kDensityWindowMs) {
         gHeardDirect = false;
         gBestRssi = 0;
         gBestSnr = 0;
     }
+}
 
+void densityCountPacket(const meshtastic_MeshPacket &mp, bool direct)
+{
+    const uint32_t now = millis();
+    densityAdvance(now);
+    gLastPacketMs = now;
+
+    DensityBucket &b = gBucket[gBucketIdx];
+    if (b.packets < 0xFFFF)
+        b.packets++;
+
+    // Whoever handed us this packet is by definition within direct radio range.
+    if (mp.relay_node)
+        nearSet(b, (uint8_t)mp.relay_node);
+
+    // Older firmware leaves relay_node unset; a zero-hop packet still names its
+    // sender as a neighbour.
+    if (direct)
+        nearSet(b, (uint8_t)(mp.from & 0xFF));
+}
+
+void densityNoteDirect(int8_t rssi, int8_t snr)
+{
     if (!gHeardDirect || rssi > gBestRssi) {
         gBestRssi = rssi;
         gBestSnr = snr;
         gHeardDirect = true;
-        gBestAtMs = now;
+        gBestAtMs = millis();
     }
+}
+
+uint32_t densityWindowPackets()
+{
+    uint32_t total = 0;
+    for (uint8_t i = 0; i < kDensityBuckets; ++i)
+        total += gBucket[i].packets;
+    return total;
 }
 
 uint16_t densityPacketsPerMin()
 {
-    uint32_t total = 0;
+    const uint32_t total = densityWindowPackets();
+    const uint32_t perMin = (total * 60000u) / kDensityWindowMs;
+    return (uint16_t)(perMin > 0xFFFF ? 0xFFFF : perMin);
+}
+
+uint8_t densityActiveNeighbours()
+{
+    uint8_t merged[kNearBytes] = {0};
     for (uint8_t i = 0; i < kDensityBuckets; ++i)
-        total += gPktBucket[i];
-    return (uint16_t)(total > 0xFFFF ? 0xFFFF : total);
+        for (uint8_t j = 0; j < kNearBytes; ++j)
+            merged[j] |= gBucket[i].near[j];
+
+    uint8_t n = 0;
+    for (uint8_t j = 0; j < kNearBytes; ++j) {
+        uint8_t v = merged[j];
+        while (v) { // Kernighan: one iteration per set bit
+            v &= (uint8_t)(v - 1);
+            n++;
+        }
+    }
+
+    // Every packet we hear was transmitted by a node inside direct radio range --
+    // the hop count describes how far away the ORIGINATOR is, not the radio that
+    // actually put those symbols on the air. Firmware predating relay_node
+    // leaves a relayed packet with no way to identify that transmitter, so
+    // traffic we cannot attribute still means at least one neighbour is there.
+    if (!n && densityWindowPackets())
+        n = 1;
+
+    return n;
 }
 } // namespace
 
@@ -826,9 +917,9 @@ class PgrosDensityModule : public MeshModule
 
     ProcessMessage handleReceived(const meshtastic_MeshPacket &mp) override
     {
-
-        densityCountPacket();
-        if (hopsTravelled(mp) == 0)
+        const bool direct = hopsTravelled(mp) == 0;
+        densityCountPacket(mp, direct);
+        if (direct)
             densityNoteDirect((int8_t)mp.rx_rssi, (int8_t)mp.rx_snr);
         return ProcessMessage::CONTINUE; // never swallow anything
     }
@@ -836,18 +927,30 @@ class PgrosDensityModule : public MeshModule
 
 static PgrosDensityModule *gDensityModule = nullptr;
 
+void MeshBridge::densityTick()
+{
+    densityAdvance(millis());
+}
+
 MeshBridge::MeshDensity MeshBridge::density() const
 {
     MeshDensity d = {};
 
     d.packetsPerMin = densityPacketsPerMin();
+    d.activeNeighbours = densityActiveNeighbours();
     d.heardDirect = gHeardDirect;
     d.bestRssi = gBestRssi;
     d.bestSnr = gBestSnr;
 
+    const uint32_t now = millis();
+    d.quietSecs = gLastPacketMs ? (uint16_t)std::min<uint32_t>(0xFFFF, (now - gLastPacketMs) / 1000) : 0xFFFF;
+
     if (airTime)
         d.utilizationPct = (uint8_t)std::min(100.0f, std::max(0.0f, airTime->channelUtilizationPercent()));
 
+    // NodeDB still answers "who do I know about", which is a different and also
+    // useful question -- it just is not what the bars are for.
+    //
     // Walk the published snapshot rather than NodeDB: this may be called from
     // the UI task, and meshNodes reallocates.
     NodeBrief nodes[kNodeSnapshotMax];
@@ -869,23 +972,42 @@ MeshBridge::MeshDensity MeshBridge::density() const
             d.directNeighbours++;
     }
 
-    // Bars. Neighbours lead; packet rate can lift a sparse-but-busy mesh by one.
-    if (d.directNeighbours >= 7)
-        d.bars = 4;
-    else if (d.directNeighbours >= 4)
-        d.bars = 3;
-    else if (d.directNeighbours >= 2)
-        d.bars = 2;
-    else if (d.directNeighbours >= 1)
-        d.bars = 1;
-    else
-        d.bars = 0;
+    // --- bars ---------------------------------------------------------------
+    //
+    // Traffic and neighbours are scored separately and the better of the two
+    // wins. They are two views of the same thing, and either one being high is
+    // real evidence of mesh around you: one neighbour relaying constantly and
+    // six neighbours each speaking once are both a live mesh.
+    uint8_t trafficBars = 0;
+    if (d.packetsPerMin >= 20)
+        trafficBars = 4;
+    else if (d.packetsPerMin >= 8)
+        trafficBars = 3;
+    else if (d.packetsPerMin >= 3)
+        trafficBars = 2;
+    else if (d.packetsPerMin >= 1)
+        trafficBars = 1;
 
-    if (d.bars < 4 && d.packetsPerMin >= 30)
-        d.bars++;
+    uint8_t neighbourBars = 0;
+    if (d.activeNeighbours >= 6)
+        neighbourBars = 4;
+    else if (d.activeNeighbours >= 4)
+        neighbourBars = 3;
+    else if (d.activeNeighbours >= 2)
+        neighbourBars = 2;
+    else if (d.activeNeighbours >= 1)
+        neighbourBars = 1;
+
+    d.bars = std::max(trafficBars, neighbourBars);
+
+    // One packet in five minutes is worth a bar even though the rate rounds down
+    // to zero, because activeNeighbours never reports zero while traffic is
+    // flowing. One packet is the difference between a quiet mesh and no mesh,
+    // and that is the distinction the bars exist to make.
 
     return d;
 }
+
 
 bool MeshBridge::startDiscovery()
 {

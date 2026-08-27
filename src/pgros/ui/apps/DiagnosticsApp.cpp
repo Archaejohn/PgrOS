@@ -203,8 +203,14 @@ void DiagnosticsApp::refresh()
     setValue(kMesh, "%lu/%lu", (unsigned long)mesh.messagesReceived(), (unsigned long)mesh.messagesSent());
 
     const auto den = mesh.density();
-    setValue(kNeighbours, "%u direct / %u seen", (unsigned)den.directNeighbours, (unsigned)den.nodesRecent);
-    setValue(kAirtime, "%u%% / %u", (unsigned)den.utilizationPct, (unsigned)den.packetsPerMin);
+    // Two different questions: who is on the air right now (what drives the
+    // bars) versus who NodeDB has ever catalogued.
+    setValue(kNeighbours, "%u near / %u known", (unsigned)den.activeNeighbours, (unsigned)den.nodesRecent);
+    if (den.quietSecs == 0xFFFF)
+        setValue(kAirtime, "%u%% / %u/min / quiet", (unsigned)den.utilizationPct, (unsigned)den.packetsPerMin);
+    else
+        setValue(kAirtime, "%u%% / %u/min / %us ago", (unsigned)den.utilizationPct, (unsigned)den.packetsPerMin,
+                 (unsigned)den.quietSecs);
 
     // Crash banner.
     if (panic::hadCrash()) {

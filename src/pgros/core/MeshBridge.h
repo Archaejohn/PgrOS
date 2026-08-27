@@ -185,9 +185,11 @@ class MeshBridge
     // view -- and that traffic is exactly what says how alive the mesh is around
     // you. Counted promiscuously, including packets we cannot decrypt.
     struct MeshDensity {
-        uint8_t directNeighbours; // distinct nodes heard at zero hops, recently
+        uint8_t activeNeighbours; // distinct nodes transmitting in direct range, last 5 min
+        uint8_t directNeighbours; // NodeDB view: nodes known at zero hops, last 30 min
         uint16_t nodesRecent;     // nodes heard at all, recently
-        uint16_t packetsPerMin;   // everything on the air we could hear
+        uint16_t packetsPerMin;   // everything on the air we could hear, last 5 min
+        uint16_t quietSecs;       // since the last packet of any kind; 0xFFFF = never
         uint8_t utilizationPct;   // channel airtime over the last minute
         int8_t bestRssi;          // strongest DIRECT packet in the window, dBm
         int8_t bestSnr;           // its SNR, dB (rounded)
@@ -197,6 +199,13 @@ class MeshBridge
 
     // Safe from any task: plain integer reads of counters the mesh task writes.
     MeshDensity density() const;
+
+    // Ages the rolling window. Must be called regularly or the counters freeze at
+    // their last value when the mesh goes quiet -- which is the one moment the
+    // bars need to be right.
+    //
+    // MESH TASK ONLY.
+    void densityTick();
 
     // A node counts as "recent" for density purposes for this long.
     static constexpr uint32_t kDensityRecentSecs = 30 * 60;

@@ -73,6 +73,12 @@ class ServiceThread : public concurrency::OSThread
 
         service_.drain();
 
+        // Age the mesh-density window. The counters are written from the receive
+        // path on this same task, so doing it here keeps every mutation single-
+        // threaded and, more to the point, keeps the window decaying when there
+        // are no packets left to decay it.
+        mesh.densityTick();
+
         // Housekeeping. ChatStore::compactIfNeeded() only does work once a
         // thread exceeds its threshold, but nothing was ever calling it, so logs
         // grew without bound. Ten minutes is far more often than a pager can
