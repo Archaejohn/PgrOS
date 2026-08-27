@@ -49,12 +49,15 @@ CallbackObserver<Keyboard, const InputEvent *> sObserver(&keyboard, &Keyboard::o
 // an older phone app, carries the bad value forward across reflashes and the
 // encoder just never works, with nothing in the log to say why.
 //
-// Note the values NodeDB picks for this board, which is the whole reason
-// translate() looks the way it does:
-//     inputbroker_event_cw  = 28  (INPUT_BROKER_USER_PRESS)
-//     inputbroker_event_ccw = 29  (INPUT_BROKER_ALT_PRESS)
-// The pager's encoder does NOT emit UP/DOWN.
+// NodeDB's defaults for this board give the encoder USER_PRESS for clockwise and
+// ALT_PRESS for counter-clockwise (NodeDB.cpp:1301-1309), but a device in the
+// field can carry anything: ours reports 18/17/10, i.e. DOWN/UP/SELECT. So
+// translate() accepts both shapes, and the USER_PRESS check below decides
+// whether the GPIO0 button can safely mean Back on this particular unit.
 // ---------------------------------------------------------------------------
+// Set by ensureRotaryConfig(); see the comment there.
+static bool sUserPressIsButton = true;
+
 bool ensureRotaryConfig()
 {
     bool changed = false;
@@ -83,11 +86,22 @@ bool ensureRotaryConfig()
         changed = true;
     }
 #endif
-    if (cm.inputbroker_event_cw == 0 || cm.inputbroker_event_ccw == 0) {
-        cm.inputbroker_event_cw = (meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar)INPUT_BROKER_USER_PRESS;
-        cm.inputbroker_event_ccw = (meshtastic_ModuleConfig_CannedMessageConfig_InputEventChar)INPUT_BROKER_ALT_PRESS;
-        changed = true;
-    }
+    // Can USER_PRESS be trusted to mean "the GPIO0 button" on this device?
+    //
+    // PgrOS maps USER_PRESS to Back, because the button is the only sensible
+    // hardware Back on this hardware. But NodeDB's defaults for this board also
+    // hand USER_PRESS to the rotary's clockwise detent -- and if both can emit
+    // it, turning the knob would back out of every screen.
+    //
+    // This is a READ, not a repair. Rewriting the encoder's event codes would
+    // work, but it would also silently overwrite persisted user config to defend
+    // against a configuration this device does not have: ours reports 18/17/10,
+    // i.e. DOWN/UP/SELECT, so USER_PRESS is already free. Checking is enough.
+    sUserPressIsButton = (cm.inputbroker_event_cw != (int)INPUT_BROKER_USER_PRESS &&
+                          cm.inputbroker_event_ccw != (int)INPUT_BROKER_USER_PRESS);
+    if (!sUserPressIsButton)
+        LOG_WARN("PgrOS: rotary emits USER_PRESS on this device; GPIO0 Back disabled to avoid a clash");
+
     moduleConfig.has_canned_message = true;
     return changed;
 }
@@ -164,13 +178,22 @@ uint32_t Keyboard::translate(const InputEvent *ev)
     case INPUT_BROKER_CANCEL:
         return key::Cancel;
 
-    // The rotary encoder, NOT a pair of buttons. NodeDB maps clockwise to
-    // USER_PRESS and counter-clockwise to ALT_PRESS on this board; a UI that
-    // waits for UP/DOWN from the encoder waits forever.
+    // The GPIO0 button -- the middle one on the bottom edge, also the BOOT
+    // button. ButtonThread's no-screen mapping sends a single press as
+    // USER_PRESS, and on a device whose encoder uses UP/DOWN nothing else on
+    // this unit produces it -- checked, not assumed, in ensureRotaryConfig().
+    //
+    // It is the hardware Back. The keyboard has no dedicated Back key: BSP is
+    // Backspace and belongs to the text field, and Esc is sym+BSP, which is not
+    // something anyone finds by accident.
     case INPUT_BROKER_USER_PRESS:
-        return key::RotateCw;
+        return sUserPressIsButton ? key::Back : key::None;
+
+    // Not emitted on this board now the encoder is pinned. Mapped to nothing
+    // rather than to a rotation, so a device that somehow still sends it does
+    // not scroll unexpectedly.
     case INPUT_BROKER_ALT_PRESS:
-        return key::RotateCcw;
+        return key::None;
 
     case INPUT_BROKER_FN_F1:
         return key::Fn1;
