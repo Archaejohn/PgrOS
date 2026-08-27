@@ -1,4 +1,0 @@
-src/input/TCA8418KeyboardBase.h
-src/input/TLoraPagerKeyboard.cpp
-src/input/TLoraPagerKeyboard.h
-src/input/kbI2cBase.cpp
