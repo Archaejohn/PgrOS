@@ -21,6 +21,7 @@
 
 #include "core/EventBus.h"
 #include "store/ChatStore.h"
+#include "store/TrackStore.h"
 #include <stdint.h>
 
 namespace pgros {
@@ -188,6 +189,9 @@ class MeshBridge
         uint16_t nodesRecent;     // nodes heard at all, recently
         uint16_t packetsPerMin;   // everything on the air we could hear
         uint8_t utilizationPct;   // channel airtime over the last minute
+        int8_t bestRssi;          // strongest DIRECT packet in the window, dBm
+        int8_t bestSnr;           // its SNR, dB (rounded)
+        bool heardDirect;         // false when bestRssi/bestSnr mean nothing
         uint8_t bars;             // 0..4, for the status bar
     };
 

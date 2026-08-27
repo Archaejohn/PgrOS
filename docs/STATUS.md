@@ -42,6 +42,11 @@ runtime allocation.
 | Web portal: chatroom + photo gallery, client-side downscale | Written, compiles |
 | Browser-generated gallery thumbnails, uploaded with the full image | Written, compiles |
 | Read receipts over a private port number | Written, compiles |
+| Node settings on-device, enums generated from the protobufs | Written, compiles |
+| Node discovery (broadcast NodeInfo request) | Written, compiles |
+| Time zone from GPS, with manual override | Written, compiles |
+| Mesh density bars, counted from relayed traffic | Written, compiles |
+| GPS track recorder + GPX export with mesh coverage | Written, compiles |
 | Silence policy (amp mute, haptics, buzzer), silent by default | Written, compiles |
 | Crash / boot-loop capture | Written, compiles |
 | Keyboard + rotary input bridge | Written, compiles |
@@ -60,7 +65,9 @@ runtime allocation.
 * **`Policy.alertsWhileCharging`** is stored and shown but not enforced; the charging
   state arrives on the event bus and `PolicyStore` does not track it. Marked with a
   comment in `Silence.cpp` rather than silently ignored.
-* **`storeGpsTrack`** is a stored preference with no recorder behind it yet.
+* **GPS track has no on-device map view.** The recorder and GPX export work; the
+  track is viewed on a phone. A tiled basemap is not going on this hardware, and
+  an auto-scaled plot without one is of limited use.
 * **No automated tests.** There is no host-side test target for the chat store, which
   is the one component that would genuinely benefit from one — its record framing and
   recovery path are pure logic and could be tested off-device.

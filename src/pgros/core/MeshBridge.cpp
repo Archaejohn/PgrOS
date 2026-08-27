@@ -543,10 +543,34 @@ class PgrosGpsObserver : public Observer<const meshtastic::Status *>
         ev.gps.sats = (uint8_t)(sats > 255 ? 255 : sats);
         ev.gps.fixValid = gps->getHasLock() ? 1 : 0;
 
-        // Let the timezone guesser see the fix. No-op unless auto mode is on and
-        // the nearest zone actually changed.
-        if (ev.gps.fixValid)
+        if (ev.gps.fixValid) {
+            // Let the timezone guesser see the fix. No-op unless auto mode is on
+            // and the nearest zone actually changed.
             timezone_::onGpsFix(ev.gps.latI, ev.gps.lonI);
+
+            // Annotate the breadcrumb with what the mesh looked like right here.
+            // This is what turns a track into a coverage map: the point of the
+            // recording is being able to see where the mesh ran out.
+            const MeshBridge::MeshDensity den = mesh.density();
+
+            TrackPoint tp = {};
+            tp.time = getTime();
+            tp.latI = ev.gps.latI;
+            tp.lonI = ev.gps.lonI;
+            tp.altM = ev.gps.altM;
+            tp.sats = ev.gps.sats;
+            tp.bars = den.bars;
+            tp.directNeighbours = den.directNeighbours;
+            tp.packetsPerMin = (uint8_t)(den.packetsPerMin > 255 ? 255 : den.packetsPerMin);
+            tp.bestRssi = den.bestRssi;
+            tp.bestSnr = den.bestSnr;
+            if (den.heardDirect)
+                tp.flags |= kTrackHeardDirect;
+
+            // Does nothing unless the user enabled recording; rate limiting and
+            // segment breaks are the store's business, not ours.
+            trackStore.offer(tp);
+        }
 
         events.post(ev);
         return 0;
@@ -746,6 +770,38 @@ void densityCountPacket()
         gPktBucket[gPktBucketIdx]++;
 }
 
+// Strongest directly-heard packet in the current window.
+//
+// "Direct" means zero hops travelled. A relayed packet carries the RSSI of the
+// hop that reached us, which describes the relay's radio and not our distance
+// from the originator -- counting it would make a far-off mesh look close, which
+// is exactly the wrong answer when the question is "am I still in coverage".
+int8_t gBestRssi = 0;
+int8_t gBestSnr = 0;
+bool gHeardDirect = false;
+uint32_t gBestAtMs = 0;
+
+void densityNoteDirect(int8_t rssi, int8_t snr)
+{
+    const uint32_t now = millis();
+
+    // Decay. A reading older than the packet window is history, not coverage;
+    // without this the last node you heard before walking out of range would
+    // keep reporting a healthy signal indefinitely.
+    if (gHeardDirect && (now - gBestAtMs) > (kDensityBuckets * kDensityBucketMs)) {
+        gHeardDirect = false;
+        gBestRssi = 0;
+        gBestSnr = 0;
+    }
+
+    if (!gHeardDirect || rssi > gBestRssi) {
+        gBestRssi = rssi;
+        gBestSnr = snr;
+        gHeardDirect = true;
+        gBestAtMs = now;
+    }
+}
+
 uint16_t densityPacketsPerMin()
 {
     uint32_t total = 0;
@@ -770,8 +826,10 @@ class PgrosDensityModule : public MeshModule
 
     ProcessMessage handleReceived(const meshtastic_MeshPacket &mp) override
     {
-        (void)mp;
+
         densityCountPacket();
+        if (hopsTravelled(mp) == 0)
+            densityNoteDirect((int8_t)mp.rx_rssi, (int8_t)mp.rx_snr);
         return ProcessMessage::CONTINUE; // never swallow anything
     }
 };
@@ -783,6 +841,9 @@ MeshBridge::MeshDensity MeshBridge::density() const
     MeshDensity d = {};
 
     d.packetsPerMin = densityPacketsPerMin();
+    d.heardDirect = gHeardDirect;
+    d.bestRssi = gBestRssi;
+    d.bestSnr = gBestSnr;
 
     if (airTime)
         d.utilizationPct = (uint8_t)std::min(100.0f, std::max(0.0f, airTime->channelUtilizationPercent()));

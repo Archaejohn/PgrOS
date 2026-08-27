@@ -2,6 +2,7 @@
 
 #include "net/Portal.h"
 #include "net/PortalAssets.h"
+#include "store/TrackStore.h"
 
 #include "configuration.h"
 
@@ -625,6 +626,60 @@ static bool serveFromFs(fs::FS &fsys, const char *path, const char *mime, HTTPRe
     return true;
 }
 
+// GET /track.gpx  -- the recorded track, annotated with mesh coverage.
+//
+// Streamed rather than buffered: a long track is far bigger than the heap, and
+// there is no reason to hold it all at once.
+static bool gpxEmit(void *ctx, const char *data, size_t len)
+{
+    HTTPResponse *res = (HTTPResponse *)ctx;
+    res->write((const uint8_t *)data, len);
+    return true;
+}
+
+static void handleTrackGpx(HTTPRequest *req, HTTPResponse *res)
+{
+    (void)req;
+
+    TrackStats st;
+    trackStore.stats(st);
+    if (!st.points) {
+        res->setStatusCode(404);
+        res->setHeader("Content-Type", "text/plain");
+        res->print("No track recorded. Enable 'Record GPS track' in Settings > Privacy.");
+        return;
+    }
+
+    res->setHeader("Content-Type", "application/gpx+xml");
+    res->setHeader("Content-Disposition", "attachment; filename=\"pgros-track.gpx\"");
+    trackStore.exportGpx(&gpxEmit, res);
+}
+
+// GET /api/track  -- summary, for the portal UI.
+static void handleTrackInfo(HTTPRequest *req, HTTPResponse *res)
+{
+    (void)req;
+
+    TrackStats st;
+    trackStore.stats(st);
+
+    std::string out = "{\"points\":" + std::to_string(st.points);
+    out += ",\"bytes\":" + std::to_string(st.bytes);
+    out += ",\"metres\":" + std::to_string(st.metres);
+    out += ",\"first\":" + std::to_string(st.firstTime);
+    out += ",\"last\":" + std::to_string(st.lastTime);
+    out += ",\"worstBars\":" + std::to_string(st.worstBars);
+    out += ",\"recording\":" + std::string(trackStore.recording() ? "true" : "false") + "}";
+    sendJson(res, out);
+}
+
+// DELETE /api/track
+static void handleTrackDelete(HTTPRequest *req, HTTPResponse *res)
+{
+    (void)req;
+    sendJson(res, trackStore.erase() ? "{\"ok\":true}" : "{\"error\":\"failed\"}");
+}
+
 // GET /*  -- the web UI.
 //
 // Three sources, in order: the SD card, internal flash, then the copy built into
@@ -697,6 +752,9 @@ bool Portal::start(uint16_t port)
 
     sServer->registerNode(new ResourceNode("/api/room", "GET", &handleRoomGet));
     sServer->registerNode(new ResourceNode("/api/room", "POST", &handleRoomPost));
+    sServer->registerNode(new ResourceNode("/track.gpx", "GET", &handleTrackGpx));
+    sServer->registerNode(new ResourceNode("/api/track", "GET", &handleTrackInfo));
+    sServer->registerNode(new ResourceNode("/api/track", "DELETE", &handleTrackDelete));
     sServer->registerNode(new ResourceNode("/api/gallery", "GET", &handleGalleryList));
     sServer->registerNode(new ResourceNode("/api/gallery", "DELETE", &handleGalleryDelete));
     sServer->registerNode(new ResourceNode("/api/upload", "POST", &handleUpload));

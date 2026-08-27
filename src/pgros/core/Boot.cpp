@@ -17,6 +17,7 @@
 #include "net/RadioCoex.h"
 #include "net/WifiManager.h"
 #include "store/ChatStore.h"
+#include "store/TrackStore.h"
 #include "ui/Shell.h"
 #include "ui/Theme.h"
 
@@ -95,6 +96,9 @@ void begin()
     // Persistent chat. begin() is deliberately cheap: it creates directories and
     // returns, and defers per-thread validation to first access, so a deep
     // history does not sit on the boot path.
+    if (!trackStore.begin())
+        LOG_WARN("PgrOS: track store unavailable");
+
     if (!chatStore.begin())
         LOG_ERROR("PgrOS: chat store unavailable");
     postSubsysReady(Subsys::Store, chatStore.ready());

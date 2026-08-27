@@ -17,6 +17,7 @@
       document.querySelectorAll('.view').forEach(function (v) { v.classList.remove('is-active'); });
       $('view-' + t.dataset.view).classList.add('is-active');
       if (t.dataset.view === 'gallery') loadGallery();
+      if (t.dataset.view === 'track') loadTrack();
     });
   });
 
@@ -247,6 +248,45 @@
         bar.style.width = Math.round(done * 100 / (done + files.length)) + '%';
         next();
       });
-    })();
+    
+  /* ── Track ────────────────────────────────────────── */
+
+  function loadTrack() {
+    fetch('/api/track', { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d.points) {
+          $('trackSummary').innerHTML =
+            '<div><b>0</b><span>points</span></div>' +
+            '<div><span>Enable "Record GPS track" in Settings &rsaquo; Privacy</span></div>';
+          $('trackDl').style.opacity = .4;
+          return;
+        }
+        $('trackDl').style.opacity = 1;
+
+        var km = d.metres >= 1000
+          ? (d.metres / 1000).toFixed(2) + ' km'
+          : d.metres + ' m';
+
+        // Worst bars is the headline: it is the answer to "did I lose the mesh".
+        var worst = d.worstBars + '/4';
+
+        $('trackSummary').innerHTML =
+          '<div><b>' + d.points.toLocaleString() + '</b><span>points</span></div>' +
+          '<div><b>' + km + '</b><span>distance</span></div>' +
+          '<div><b>' + worst + '</b><span>weakest mesh</span></div>' +
+          '<div><b>' + Math.round(d.bytes / 1024) + ' KB</b><span>on device</span></div>' +
+          (d.recording ? '<div><b>REC</b><span>recording</span></div>' : '');
+      })
+      .catch(function () {
+        $('trackSummary').textContent = 'Could not reach the pager.';
+      });
+  }
+
+  $('trackClear').addEventListener('click', function () {
+    if (!confirm('Delete the recorded track?')) return;
+    fetch('/api/track', { method: 'DELETE' }).then(loadTrack);
+  });
+})();
   });
 })();

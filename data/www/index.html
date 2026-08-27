@@ -14,6 +14,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab is-active" data-view="room" role="tab">Room</button>
     <button class="tab" data-view="gallery" role="tab">Gallery</button>
+    <button class="tab" data-view="track" role="tab">Track</button>
   </nav>
 </header>
 
@@ -41,6 +42,17 @@
   <div id="grid" class="grid">
     <p class="empty">No photos yet.</p>
   </div>
+</main>
+
+<!-- ── Track ────────────────────────────────────────────── -->
+<main id="view-track" class="view">
+  <div id="trackSummary" class="tracksum">Loading…</div>
+  <div class="uploadbar">
+    <a class="btn" id="trackDl" href="/track.gpx" download>Download GPX</a>
+    <button class="btn ghost" id="trackClear" type="button">Clear</button>
+  </div>
+  <p class="note">Each point carries latitude, longitude and elevation, plus how much
+  mesh was audible there &mdash; so the track shows where coverage ran out.</p>
 </main>
 
 <!-- Full-size viewer -->
