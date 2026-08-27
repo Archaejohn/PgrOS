@@ -147,6 +147,12 @@ html, body {
   background: rgba(0, 0, 0, .94);
   display: flex; align-items: center; justify-content: center;
 }
+
+/* [hidden] is display:none in the UA stylesheet, and the author rule above
+   beats it. Without this the viewer covers the page from first paint and its
+   close button appears to do nothing -- it sets hidden, which loses. Any rule
+   that sets display on an element toggled by [hidden] needs this. */
+.viewer[hidden] { display: none; }
 .viewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
 .viewerClose {
   position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 14px;
