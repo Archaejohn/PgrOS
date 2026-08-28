@@ -401,8 +401,20 @@ void ConversationApp::bindRow(uint8_t slot, const ChatMessage &m)
 
     // --- side -------------------------------------------------------------
     // Everything in the wrap follows the bubble to its side of the screen.
-    lv_obj_set_flex_align(r.wrap, LV_FLEX_ALIGN_START, outbound ? LV_FLEX_ALIGN_END : LV_FLEX_ALIGN_START,
-                          LV_FLEX_ALIGN_START);
+    //
+    // BOTH cross arguments have to move, which is the part that is easy to get
+    // wrong. lv_obj_set_flex_align() is (main_place, cross_place,
+    // track_cross_place), and in a non-wrapping COLUMN every child sits in ONE
+    // track whose width is that of the widest child:
+    //
+    //   cross_place        where each child sits inside that track
+    //   track_cross_place  where the track itself sits inside the wrap
+    //
+    // Setting only cross_place right-aligns the bubble against its own siblings
+    // and then leaves the whole track parked at the left edge, so outbound
+    // messages took the outbound colour and stayed on the inbound side.
+    const lv_flex_align_t side = outbound ? LV_FLEX_ALIGN_END : LV_FLEX_ALIGN_START;
+    lv_obj_set_flex_align(r.wrap, LV_FLEX_ALIGN_START, side, side);
 
     // --- bubble skin ------------------------------------------------------
     // The two bubble styles are mutually exclusive, and Theme does not expose
