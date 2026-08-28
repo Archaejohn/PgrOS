@@ -237,6 +237,24 @@ void Shell::run()
 
             App *app = appFor(current());
             bool consumed = app && app->onKey(k);
+
+            // A Backspace nobody wanted is a Back gesture.
+            //
+            // BSP is the only navigation key reachable with the hand already
+            // holding the device, so it doubles as Back. Screens with text to
+            // delete consume it and never see this; everywhere else -- including
+            // a text field that is already empty -- it pops. GPIO0 does the same
+            // job for a two-handed grip and is unchanged.
+            //
+            // Deliberately NOT a double tap while a field holds text: two quick
+            // backspaces is how everyone deletes a two-character typo, and
+            // leaving the screen mid-edit is not a plausible thing to have meant
+            // by it.
+            if (!consumed && k == key::Backspace) {
+                k = key::Back;
+                consumed = app && app->onKey(k);
+            }
+
             if (!consumed) {
                 // Default handling.
                 if (k == key::Back || k == key::Cancel) {

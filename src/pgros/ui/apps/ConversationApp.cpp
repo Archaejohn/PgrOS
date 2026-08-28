@@ -1052,13 +1052,17 @@ bool ConversationApp::onKey(uint32_t k)
             // Backspace belongs to the draft even here, so a mistyped emoji is
             // undone without leaving the grid. One UTF-8 character, not one
             // byte, or the remains of a four-byte sequence become mojibake.
-            if (mDraftLen) {
-                do {
-                    mDraftLen--;
-                } while (mDraftLen && ((uint8_t)mDraft[mDraftLen] & 0xC0) == 0x80);
-                mDraft[mDraftLen] = 0;
-                refreshComposer();
-            }
+            //
+            // With nothing left to delete it means Back, same as everywhere
+            // else; the Shell re-dispatches it and the case above closes the
+            // grid.
+            if (!mDraftLen)
+                return false;
+            do {
+                mDraftLen--;
+            } while (mDraftLen && ((uint8_t)mDraft[mDraftLen] & 0xC0) == 0x80);
+            mDraft[mDraftLen] = 0;
+            refreshComposer();
             return true;
 
         default:
@@ -1082,18 +1086,19 @@ bool ConversationApp::onKey(uint32_t k)
         return true;
 
     case key::Backspace:
-        if (mDraftLen) {
-            // One UTF-8 character. An emoji is up to four bytes and deleting one
-            // of them leaves an invalid sequence that renders as a placeholder
-            // box and goes out over the mesh as garbage.
-            do {
-                mDraftLen--;
-            } while (mDraftLen && ((uint8_t)mDraft[mDraftLen] & 0xC0) == 0x80);
-            mDraft[mDraftLen] = 0;
-            refreshComposer();
-        }
-        // Consumed either way: Backspace on an empty composer must not fall
-        // through to the Shell and pop the screen.
+        // Nothing left to delete means this was navigation, not editing: fall
+        // through and let the Shell turn it into Back. That is what makes the
+        // conversation escapable one handed.
+        if (!mDraftLen)
+            return false;
+        // One UTF-8 character. An emoji is up to four bytes and deleting one of
+        // them leaves an invalid sequence that renders as a placeholder box and
+        // goes out over the mesh as garbage.
+        do {
+            mDraftLen--;
+        } while (mDraftLen && ((uint8_t)mDraft[mDraftLen] & 0xC0) == 0x80);
+        mDraft[mDraftLen] = 0;
+        refreshComposer();
         return true;
 
     case key::Up:

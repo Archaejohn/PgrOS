@@ -951,10 +951,12 @@ bool SettingsApp::onKey(uint32_t k)
         }
         switch (k) {
         case key::Backspace:
-            if (mTextLen) {
-                mTextBuf[--mTextLen] = 0;
-                refreshTextPane();
-            }
+            // An empty field means this was navigation; the Shell turns an
+            // unclaimed Backspace into Back.
+            if (!mTextLen)
+                return false;
+            mTextBuf[--mTextLen] = 0;
+            refreshTextPane();
             return true;
         case key::Enter:
         case key::Select:

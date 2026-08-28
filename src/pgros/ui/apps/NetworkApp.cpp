@@ -675,10 +675,12 @@ bool NetworkApp::onKey(uint32_t k)
             return true;
         }
         if (k == key::Backspace) {
-            if (mPassLen) {
-                mPassBuf[--mPassLen] = '\0';
-                refreshPassphrase();
-            }
+            // An empty field means this was navigation, not editing; the Shell
+            // turns an unclaimed Backspace into Back.
+            if (!mPassLen)
+                return false;
+            mPassBuf[--mPassLen] = '\0';
+            refreshPassphrase();
             return true;
         }
         if (k == key::Enter || k == key::Select) {
